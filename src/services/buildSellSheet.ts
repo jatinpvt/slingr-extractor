@@ -11,7 +11,7 @@ import type {
 import { formatMeasuredPercentage, formatPercentage, safeDivide } from '../lib/format.js';
 
 function getProductName(item: WorkOrderItem): string {
-  return item.product?.caseInformation?.unitProduct?.atomicProduct?.label
+  return item.product?.label
     || item.product?.caseInformation?.unitProduct?.label
     || item.product?.label
     || item.label

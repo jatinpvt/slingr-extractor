@@ -24,6 +24,42 @@ const PAGE = `<!doctype html>
     button { border: 0; padding: 0 18px; color: white; background: #216b40; font-weight: 750; cursor: pointer; }
     button:hover { background: #185632; }
     button:disabled { opacity: 0.75; cursor: wait; }
+    .secondary-button { background: #7a5c32; }
+    .secondary-button:hover { background: #5e4526; }
+    .joint-progress { display: none; width: 100%; margin-top: 14px; }
+    .joint-progress.visible { display: block; }
+    .joint-track {
+      position: relative; height: 14px; border-radius: 999px; overflow: hidden;
+      border: 1px solid rgba(24, 50, 38, 0.14);
+      background: linear-gradient(90deg, #edf3ee 0%, #e4eee5 100%);
+      box-shadow: inset 0 2px 8px rgba(24, 50, 38, 0.08);
+    }
+    .joint-burn {
+      position: absolute; inset: 0 auto 0 0; width: 0%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, #183226 0%, #216b40 26%, #3c8d5d 58%, #d9b74d 100%);
+      background-size: 200% 100%;
+      box-shadow: 0 0 16px rgba(33, 107, 64, 0.24), inset 0 0 18px rgba(255, 255, 255, 0.32);
+      transition: width 0.25s ease-out;
+      animation: progressShimmer 1.4s linear infinite;
+    }
+    .joint-burn::after {
+      content: '';
+      position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+      width: 12px; height: 12px; border-radius: 50%;
+      background: radial-gradient(circle, rgba(255,255,255,0.95) 0%, #f5e6a9 32%, #d9b74d 60%, rgba(24,50,38,0.7) 100%);
+      box-shadow: 0 0 14px rgba(217, 183, 77, 0.7);
+    }
+    .joint-core {
+      position: absolute; left: 8px; top: 2px; width: 32px; height: 10px; border-radius: 999px;
+      background: linear-gradient(90deg, rgba(24, 50, 38, 0.82), rgba(94, 129, 94, 0.78));
+      box-shadow: inset 0 0 10px rgba(255, 255, 255, 0.18);
+      opacity: 0.8;
+    }
+    @keyframes progressShimmer {
+      0% { background-position: 0% 0%; }
+      100% { background-position: 200% 0%; }
+    }
     .status { min-height: 22px; margin-top: 12px; color: #2f7650; font-weight: 700; }
     .status.error { color: #8b1d1d; }
     .status.success { color: #226c44; }
@@ -40,6 +76,13 @@ const PAGE = `<!doctype html>
       <div class="controls">
         <input id="poNumber" name="poNumber" inputmode="numeric" pattern="[0-9]+" maxlength="30" placeholder="e.g. 24382" autocomplete="off" required autofocus>
         <button id="submit-button" type="submit">Download Excel</button>
+        <button id="stop-button" type="button" class="secondary-button" hidden>Stop</button>
+      </div>
+      <div id="joint-progress" class="joint-progress" aria-live="polite" aria-label="Generation progress">
+        <div class="joint-track">
+          <div class="joint-core"></div>
+          <div id="joint-burn" class="joint-burn"></div>
+        </div>
       </div>
       <p id="form-status" class="status" aria-live="polite"></p>
     </form>
@@ -47,11 +90,62 @@ const PAGE = `<!doctype html>
   <script>
     const form = document.getElementById('sell-sheet-form');
     const submitButton = document.getElementById('submit-button');
+    const stopButton = document.getElementById('stop-button');
     const status = document.getElementById('form-status');
+    const jointProgress = document.getElementById('joint-progress');
+    const jointBurn = document.getElementById('joint-burn');
+    let activeController = null;
+    let activeProgressTimer = null;
+
     const setStatus = (message, kind = '') => {
       status.textContent = message || '';
       status.className = (kind ? 'status ' + kind : 'status').trim();
     };
+
+    const stopProgress = () => {
+      if (activeProgressTimer) {
+        cancelAnimationFrame(activeProgressTimer);
+      }
+      jointBurn.style.width = '0%';
+      jointProgress.classList.remove('visible');
+    };
+
+    const beginProgress = () => {
+      let start = null;
+      const duration = 4200;
+      stopProgress();
+      jointProgress.classList.add('visible');
+      const step = (time) => {
+        if (start === null) start = time;
+        const elapsed = time - start;
+        const raw = Math.min(100, (elapsed / duration) * 100);
+        const eased = raw;
+        jointBurn.style.width = eased + '%';
+        if (eased < 100) {
+          activeProgressTimer = requestAnimationFrame(step);
+        }
+      };
+      activeProgressTimer = requestAnimationFrame(step);
+    };
+
+    const resetControls = () => {
+      submitButton.disabled = false;
+      submitButton.textContent = 'Download Excel';
+      stopButton.hidden = true;
+      stopButton.disabled = false;
+      if (activeController) {
+        activeController = null;
+      }
+      stopProgress();
+    };
+
+    stopButton.addEventListener('click', () => {
+      if (activeController) {
+        activeController.abort();
+      }
+      setStatus('Request stopped.', 'error');
+      resetControls();
+    });
 
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -62,15 +156,19 @@ const PAGE = `<!doctype html>
         return;
       }
 
+      activeController = new AbortController();
       submitButton.disabled = true;
+      stopButton.hidden = false;
       submitButton.textContent = 'Generating...';
       setStatus('Creating your sell sheet...', '');
+      beginProgress();
 
       try {
         const response = await fetch(form.action, {
           method: 'POST',
           headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' },
           body: new URLSearchParams({ poNumber }).toString(),
+          signal: activeController.signal,
         });
 
         if (!response.ok) {
@@ -87,10 +185,13 @@ const PAGE = `<!doctype html>
         URL.revokeObjectURL(downloadUrl);
         setStatus('Your sell sheet is ready.', 'success');
       } catch (error) {
-        setStatus(error instanceof Error ? error.message : 'The sell sheet could not be generated.', 'error');
+        if (error && error.name === 'AbortError') {
+          setStatus('Download stopped.', 'error');
+        } else {
+          setStatus(error instanceof Error ? error.message : 'The sell sheet could not be generated.', 'error');
+        }
       } finally {
-        submitButton.disabled = false;
-        submitButton.textContent = 'Download Excel';
+        resetControls();
       }
     });
   </script>
@@ -102,6 +203,59 @@ function getErrorMessage(error: unknown): string {
     return error.message;
   }
   return String(error);
+}
+
+function isPoNotFoundError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    /No scm\.workOrders record found|PO .* could not be found|invalid PO/i.test(error.message)
+  );
+}
+
+async function generateSellSheetWithPoFallback(
+  poNumber: string,
+): Promise<{ workbook: Buffer; resolvedPoNumber: string }> {
+  try {
+    const workbook = await generateSellSheetBuffer(poNumber);
+
+    return {
+      workbook,
+      resolvedPoNumber: poNumber,
+    };
+  } catch (error) {
+    if (!isPoNotFoundError(error)) {
+      throw error;
+    }
+
+    if (poNumber.startsWith('0')) {
+      throw error;
+    }
+
+    const fallbackPoNumber = `0${poNumber}`;
+
+    console.log(
+      `PO ${poNumber} was not found in Slingr. Retrying as ${fallbackPoNumber}`,
+    );
+
+    try {
+      const workbook = await generateSellSheetBuffer(fallbackPoNumber);
+
+      console.log(
+        `PO ${poNumber} resolved successfully as ${fallbackPoNumber}`,
+      );
+
+      return {
+        workbook,
+        resolvedPoNumber: fallbackPoNumber,
+      };
+    } catch (fallbackError) {
+      if (isPoNotFoundError(fallbackError)) {
+        throw error;
+      }
+
+      throw fallbackError;
+    }
+  }
 }
 
 function getErrorStatus(error: unknown): number {
@@ -160,8 +314,16 @@ const server = createServer(async (request, response) => {
 
   try {
     console.log(`Starting sell sheet generation for PO ${poNumber}`);
-    const workbook = await generateSellSheetBuffer(poNumber);
-    console.log(`Generated sell sheet for PO ${poNumber} (${workbook.length} bytes)`);
+
+    const {
+      workbook,
+      resolvedPoNumber,
+    } = await generateSellSheetWithPoFallback(poNumber);
+
+    console.log(
+      `Generated sell sheet for PO ${poNumber} using Slingr PO ${resolvedPoNumber} (${workbook.length} bytes)`,
+    );
+
     response.writeHead(200, {
       'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       'content-disposition': `attachment; filename="sell_sheet_${poNumber}.xlsx"`,
