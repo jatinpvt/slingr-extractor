@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { generateSellSheet } from './services/generateSellSheet.js';
 
 function usage(): never {
@@ -27,13 +28,30 @@ function parseArgs(argv: string[]): { poNumber: string; output?: string } {
   return { poNumber, output };
 }
 
-const { poNumber, output } = parseArgs(process.argv.slice(2));
+function shouldRunCli(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return import.meta.url === pathToFileURL(entry).href;
+  } catch {
+    return false;
+  }
+}
 
-generateSellSheet(poNumber, output)
-  .then((file) => {
-    console.log(`Sell sheet created: ${file}`);
-  })
-  .catch((error) => {
-    console.error(error instanceof Error ? error.stack || error.message : error);
-    process.exit(1);
-  });
+if (shouldRunCli()) {
+  const args = process.argv.slice(2);
+  if (args.length === 0) {
+    process.exit(0);
+  }
+
+  const { poNumber, output } = parseArgs(args);
+
+  generateSellSheet(poNumber, output)
+    .then((file) => {
+      console.log(`Sell sheet created: ${file}`);
+    })
+    .catch((error) => {
+      console.error(error instanceof Error ? error.stack || error.message : error);
+      process.exit(1);
+    });
+}
