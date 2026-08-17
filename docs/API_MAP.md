@@ -40,6 +40,7 @@ For OCS also require:
 Confirmed fields:
 - `currentInventory`
 - `totalThcPercentage`
+- `totalCbdPercentage` when populated
 - `inputLotId[]`
 - `primaryProductLotId`
 - `packagingDate`
@@ -57,8 +58,9 @@ Confirmed:
 - `terpenesTable` is generated HTML containing terpene name/percentage pairs; the validated PO 24382 input lot contains three entries used as the Top 3 Terpenes
 
 Potency rule:
-- Use THC % from the selected input lot; fall back to the matching finished-inventory `totalThcPercentage` when input-lot THC is unavailable
-- Use CBD % from the selected input lot
+- Select inventory inside the same explicit GL/FT program used for Cases Available
+- Use populated finished-inventory THC/CBD first; use that inventory's linked input lot as fallback
+- Never average multiple lots; record ambiguity in `_Raw`
 
 ## Customer portfolio
 `GET /data/crm.portfolios` with pagination, then local filtering.
@@ -74,3 +76,15 @@ Confirmed:
 - `currentPrice.msrpPerUnit` is populated for the matching OCS portfolio for PO 24382 and supplies MSRP
 - `currentPrice.wholesalePricePerUnit`
 - `currentPrice.landedCostPerUnit`
+- `productInventoryEntry.id` links a portfolio to a finished-inventory record
+- `thcRange`, `cbdRange`, and tolerance bounds supply FT2 potency ranges when populated
+
+Pricing rule:
+- MSRP = `currentPrice.msrpPerUnit`
+- Cost per Unit = `currentPrice.wholesalePricePerUnit`
+- Cost per Case = Cost per Unit × Units / Case
+- Missing direct pricing remains blank; PO amount is audit-only
+
+Program rule:
+- `ft === false` maps to GL
+- `ft === true` requires an explicit linked inventory/PO Tier 1 or Tier 2 label; the boolean alone is never guessed

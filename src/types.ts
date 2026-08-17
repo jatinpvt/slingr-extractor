@@ -22,7 +22,7 @@ export type WorkOrderItem = {
   unitGtin?: { id?: string; label?: string; unitGtin?: string | null } | null;
   caseGtin?: unknown;
   sku?: SkuValue;
-  productPortfolio?: unknown;
+  productPortfolio?: Ref | null;
   product?: {
     id: string;
     label?: string;
@@ -33,10 +33,13 @@ export type WorkOrderItem = {
       unitProduct?: {
         id?: string;
         label?: string;
+        isVarietyPack?: boolean | null;
+        cannabisWeight?: number | null;
         format?: Ref | null;
         atomicProduct?: {
           id?: string;
           label?: string;
+          cannabisWeight?: number | null;
           productType?: Ref | null;
           cannabis?: {
             profile?: {
@@ -87,6 +90,7 @@ export type ProductInventory = {
   status?: string | null;
   skidChecked?: boolean | null;
   totalThcPercentage?: string | number | null;
+  totalCbdPercentage?: string | number | null;
   inReWork?: boolean | null;
 };
 
@@ -125,6 +129,8 @@ export type Portfolio = {
   caseProduct?: Ref & { status?: string | null };
   customer?: Ref | null;
   ft?: boolean | null;
+  productInventoryEntry?: Ref | null;
+  newLaunch?: boolean | null;
   strainType?: string | null;
   listing?: {
     status?: string | null;
@@ -135,6 +141,15 @@ export type Portfolio = {
     msrpPerUnit?: number | null;
     wholesalePricePerUnit?: number | null;
     date?: string | null;
+  } | null;
+  thcRange?: string | null;
+  cbdRange?: string | null;
+  tolerances?: {
+    thcLowerBound?: number | string | null;
+    thcUpperBound?: number | string | null;
+    cbdLowerBound?: number | string | null;
+    cbdUpperBound?: number | string | null;
+    units?: string | null;
   } | null;
   status?: string | null;
 };
@@ -160,9 +175,11 @@ export type SellSheetRow = {
   terps: string;
   totalTerpenePercent: string | number;
   cbdPercent: string;
-  casesAvailable: number;
+  casesAvailable: number | '';
   listing: string;
   _raw: {
+    poNumber?: string | number | null;
+    workOrderId: string;
     productId: string;
     poItemId?: string;
     itemRecordId?: string;
@@ -171,6 +188,17 @@ export type SellSheetRow = {
     inputLotIds: string[];
     selectedInputLotId?: string;
     portfolioId?: string;
+    portfolioSku?: string;
+    listingProgram: string;
+    msrpSourceValue: string | number;
+    wholesalePriceSourceValue: string | number;
+    landedCostSourceValue: string | number;
+    poAmount: string | number;
+    rawInventoryThc: string | number;
+    rawInventoryCbd: string | number;
+    rawInputLotThc: string;
+    rawInputLotCbd: string;
+    generatedAt: string;
     warnings: string[];
   };
 };

@@ -36,17 +36,10 @@ export async function loadSellSheetData(client: SlingrClient, cfg: AppConfig, po
     relevantInventory.flatMap((x) => x.inputLotId ?? []).map((x) => x.id).filter(Boolean),
   )];
 
-  const inputLots = await mapLimit(inputLotIds, 6, async (id) => {
-    try {
-      return await getInputLot(client, id);
-    } catch (error) {
-      console.warn(`Warning: failed to load input lot ${id}: ${(error as Error).message}`);
-      return null;
-    }
-  });
+  const inputLots = await mapLimit(inputLotIds, 6, (id) => getInputLot(client, id));
 
   const inputLotsById = new Map<string, InputLot>();
-  for (const lot of inputLots) if (lot) inputLotsById.set(lot.id, lot);
+  for (const lot of inputLots) inputLotsById.set(lot.id, lot);
 
   return { workOrder, caseProductsById, inventories, inputLotsById, portfolios };
 }

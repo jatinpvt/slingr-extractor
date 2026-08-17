@@ -27,7 +27,9 @@ export const config = {
   customerId: process.env.SELL_SHEET_CUSTOMER_ID || '660415260e5a6f6353998642',
   pageSize: int('SLINGR_PAGE_SIZE', 500),
   timeoutMs: int('SLINGR_TIMEOUT_MS', 45_000),
+  retryCount: int('SLINGR_RETRY_COUNT', 3),
   requireSkidChecked: bool('REQUIRE_SKID_CHECKED', false),
+  ft2CasesAvailable: int('SELL_SHEET_FT2_CASES_AVAILABLE', 500),
 };
 
 export type AppConfig = typeof config;

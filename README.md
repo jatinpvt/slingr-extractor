@@ -7,7 +7,7 @@ Enter a PO number on a local landing page and this project logs into Slingr, ret
 | Brand | Product Name | Strain Type | Format | Category | SKU | MSRP | Units / Case | Cost per Unit | Cost per Case | THC % | Terps | Total Terpene Percent (%) | CBD % | Cases Available | General Listing / FT 1 / FT 2 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 
-**FT1/FT2** stays blank until that mapping is confirmed. Other fields remain blank only when the matching Slingr source value is unavailable.
+FT1/FT2 is emitted only when an explicit Slingr Tier 1/Tier 2 label supports it. Ambiguous values stay blank and are explained on the hidden `_Raw` sheet.
 
 ## Requirements
 
@@ -68,31 +68,27 @@ The local filtering is intentional because relationship query filters on Invento
 ## Current business logic
 
 - `Brand`: `pmd.products.caseProducts.brand.label`
-- `Product Name`: PO embedded atomic-product label, with unit/case labels as fallbacks
+- `Product Name`: clean PO unit-product label, with atomic/case labels as fallbacks
 - `Strain Type`: PO embedded profile strain type, with matching OCS portfolio `strainType` fallback
-- `Format`: PO embedded format label
-- `Category`: PO embedded product-type label
+- `Format`: compact structured pack/weight (format-label parsing fallback)
+- `Category`: controlled customer-facing mapping for cartridges, AIO vapes, infused pre-rolls, and blunts
 - `SKU`: OCS entry in PO product `customers[]`
 - `MSRP`: matching OCS portfolio `currentPrice.msrpPerUnit`
 - `Units / Case`: PO `unitsInACase`
-- `Cost per Unit`: `amount / (numberOfCases * unitsInACase)`
-- `Cost per Case`: `amount / numberOfCases`
-- `Cases Available`: sum of positive `currentInventory` for matching `caseProduct.id` + OCS board
-- `THC %`: selected input lot `cannabinoids.totalThcPercentage`; finished-inventory percentage fallback
-- `Terps`: top three name/percentage entries from the selected input lot's generated `terpenesTable`, exported as names
+- `Cost per Unit`: selected portfolio `currentPrice.wholesalePricePerUnit`
+- `Cost per Case`: direct Cost per Unit × Units / Case
+- `Cases Available`: deduplicated positive inventory for the same case product, OCS board, and explicit listing program; FT2 uses `SELL_SHEET_FT2_CASES_AVAILABLE` (default 500)
+- `THC %` / `CBD %`: exact selected finished-inventory result first, then that record's linked input lot
+- `Terps`: top three name/percentage entries from the same input lot, one per line
 - `Total Terpene Percent (%)`: selected input lot `totalTerpenePercent`
-- `CBD %`: selected input lot `cannabinoids.totalCbdPercentage`, preserving `<`/`>` comparisons
 - `GL`: `crm.portfolios.ft === false`
-- `ft === true`: left blank until FT1/FT2 mapping is confirmed
+- `FT 1` / `FT 2`: explicit linked PO/inventory tier labels only
 
 ### Potency lot selection
 
-If multiple OCS inventory lots exist for one product, the current rule chooses one lot for potency using:
-1. skid-checked first,
-2. positive inventory first,
-3. newest packaging date.
+Inventory potency selection ranks exact PO item, exact work order, selected portfolio link, positive inventory, skid check, then packaging date. It never crosses the selected listing program.
 
-`Cases Available` is still summed across all matching positive OCS inventory rows. The downloaded workbook contains one worksheet with only the 16 requested columns.
+The visible worksheet contains exactly the 16 requested columns. A hidden `_Raw` worksheet records source IDs, raw values, and ambiguity warnings.
 
 ## Tests
 

@@ -20,12 +20,48 @@ export const SELL_SHEET_HEADERS = [
   'General Listing / FT 1 / FT 2',
 ] as const;
 
+const RAW_HEADERS = [
+  'PO number',
+  'workOrder ID',
+  'PO item ID',
+  'item record ID',
+  'case product ID',
+  'selected portfolio ID',
+  'portfolio SKU',
+  'listing program',
+  'MSRP source value',
+  'wholesale price source value',
+  'landed cost source value',
+  'PO amount',
+  'inventory candidate IDs',
+  'selected inventory ID',
+  'input lot IDs',
+  'selected input lot ID',
+  'raw inventory THC',
+  'raw inventory CBD',
+  'raw input lot THC',
+  'raw input lot CBD',
+  'warnings',
+  'generation timestamp',
+] as const;
+
+const THIN_BLACK: Partial<ExcelJS.Border> = { style: 'thin', color: { argb: 'FF000000' } };
+
 export function createSellSheetWorkbook(rows: SellSheetRow[]): ExcelJS.Workbook {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'Weed Me Sell Sheet Automation';
   workbook.created = new Date();
 
-  const ws = workbook.addWorksheet('Sell Sheet', { views: [{ state: 'frozen', ySplit: 1 }] });
+  const ws = workbook.addWorksheet('Sell Sheet', {
+    views: [{ state: 'frozen', ySplit: 1, showGridLines: false }],
+    pageSetup: {
+      orientation: 'landscape',
+      fitToPage: true,
+      fitToWidth: 1,
+      fitToHeight: 0,
+      printTitlesRow: '1:1',
+    },
+  });
   ws.addRow([...SELL_SHEET_HEADERS]);
 
   for (const row of rows) {
@@ -49,19 +85,70 @@ export function createSellSheetWorkbook(rows: SellSheetRow[]): ExcelJS.Workbook 
     ]);
   }
 
-  ws.getRow(1).font = { bold: true };
-  ws.getRow(1).alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
-  ws.getRow(1).height = 34;
-  ws.autoFilter = { from: 'A1', to: 'P1' };
+  const header = ws.getRow(1);
+  header.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
+  header.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF9C001A' } };
+  header.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+  header.height = 52;
+  ws.autoFilter = { from: 'A1', to: `P${Math.max(1, ws.rowCount)}` };
 
-  const widths = [16, 42, 14, 28, 22, 16, 12, 14, 15, 15, 12, 32, 25, 12, 16, 26];
+  const widths = [16, 42, 14, 14, 22, 16, 12, 14, 15, 15, 15, 28, 25, 15, 16, 25];
   widths.forEach((width, index) => { ws.getColumn(index + 1).width = width; });
-  ws.eachRow((r, rowNumber) => {
-    if (rowNumber > 1) r.alignment = { vertical: 'top', wrapText: true };
+  ws.eachRow((row, rowNumber) => {
+    row.eachCell({ includeEmpty: true }, (cell, columnNumber) => {
+      cell.border = { top: THIN_BLACK, left: THIN_BLACK, bottom: THIN_BLACK, right: THIN_BLACK };
+      if (rowNumber > 1) {
+        cell.alignment = {
+          vertical: 'middle',
+          horizontal: columnNumber === 2 || columnNumber === 12 ? 'left' : 'center',
+          wrapText: true,
+        };
+      }
+    });
+    if (rowNumber > 1) {
+      const terpeneLines = String(row.getCell(12).value || '').split('\n').length;
+      row.height = terpeneLines > 1 ? Math.max(46, terpeneLines * 18) : 46;
+    }
   });
-  ws.getColumn(7).numFmt = '$0.00';
-  ws.getColumn(9).numFmt = '$0.00';
-  ws.getColumn(10).numFmt = '$0.00';
+
+  const currencyFormat = '$#,##0.00;[Red]($#,##0.00);-';
+  const integerFormat = '0;[Red](0);-';
+  [7, 9, 10].forEach((column) => { ws.getColumn(column).numFmt = currencyFormat; });
+  [8, 15].forEach((column) => { ws.getColumn(column).numFmt = integerFormat; });
+
+  const raw = workbook.addWorksheet('_Raw');
+  raw.state = 'hidden';
+  raw.addRow([...RAW_HEADERS]);
+  for (const row of rows) {
+    const data = row._raw;
+    raw.addRow([
+      data.poNumber ?? '',
+      data.workOrderId,
+      data.poItemId ?? '',
+      data.itemRecordId ?? '',
+      data.productId,
+      data.portfolioId ?? '',
+      data.portfolioSku ?? '',
+      data.listingProgram,
+      data.msrpSourceValue,
+      data.wholesalePriceSourceValue,
+      data.landedCostSourceValue,
+      data.poAmount,
+      data.inventoryIds.join('\n'),
+      data.selectedInventoryId ?? '',
+      data.inputLotIds.join('\n'),
+      data.selectedInputLotId ?? '',
+      data.rawInventoryThc,
+      data.rawInventoryCbd,
+      data.rawInputLotThc,
+      data.rawInputLotCbd,
+      data.warnings.join('\n'),
+      data.generatedAt,
+    ]);
+  }
+  raw.getRow(1).font = { bold: true };
+  raw.views = [{ state: 'frozen', ySplit: 1 }];
+  raw.columns.forEach((column) => { column.width = 24; });
 
   return workbook;
 }
