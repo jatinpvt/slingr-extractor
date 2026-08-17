@@ -1,11 +1,5 @@
 import 'dotenv/config';
 
-function required(name: string): string {
-  const value = process.env[name]?.trim();
-  if (!value) throw new Error(`Missing required environment variable: ${name}`);
-  return value;
-}
-
 function bool(name: string, fallback = false): boolean {
   const value = process.env[name];
   if (value == null || value === '') return fallback;
@@ -21,8 +15,8 @@ function int(name: string, fallback: number): number {
 
 export const config = {
   baseUrl: (process.env.SLINGR_BASE_URL || 'https://weedme.slingrs.io/prod/runtime/api').replace(/\/$/, ''),
-  email: required('SLINGR_EMAIL'),
-  password: required('SLINGR_PASSWORD'),
+  email: process.env.SLINGR_EMAIL?.trim() || '',
+  password: process.env.SLINGR_PASSWORD || '',
   customerCode: process.env.SELL_SHEET_CUSTOMER_CODE || 'OCS',
   customerId: process.env.SELL_SHEET_CUSTOMER_ID || '660415260e5a6f6353998642',
   pageSize: int('SLINGR_PAGE_SIZE', 500),

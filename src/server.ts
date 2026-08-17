@@ -1,4 +1,6 @@
 import { createServer, type ServerResponse } from 'node:http';
+import { config, type AppConfig } from './config.js';
+import { normalizePoNumber, poNumberFilePart } from './lib/poNumber.js';
 import { generateSellSheetBuffer } from './services/generateSellSheet.js';
 
 const PAGE = `<!doctype html>
@@ -17,6 +19,11 @@ const PAGE = `<!doctype html>
     p { color: #557064; line-height: 1.55; }
     form { margin-top: 28px; }
     label { display: block; margin-bottom: 8px; font-weight: 750; }
+    .credential-input { width: 100%; margin-bottom: 14px; }
+    .password-wrap { position: relative; margin-bottom: 14px; }
+    .password-wrap .credential-input { margin-bottom: 0; padding-right: 54px; }
+    .password-toggle { position: absolute; top: 6px; right: 6px; min-height: 36px; width: 40px; padding: 0; color: #216b40; background: transparent; font-size: 20px; line-height: 1; }
+    .password-toggle:hover { color: #185632; background: #edf5ef; }
     .controls { display: flex; gap: 10px; }
     input, button { min-height: 48px; border-radius: 10px; font: inherit; }
     input { min-width: 0; flex: 1; border: 1px solid #b7c9bd; padding: 0 14px; font-size: 18px; }
@@ -70,11 +77,18 @@ const PAGE = `<!doctype html>
   <main>
     <p class="eyebrow">Weed Me × Slingr</p>
     <h1>Create a sell sheet</h1>
-    <p>Enter an OCS purchase order number. Your Excel file will download when the Slingr data is ready.</p>
+    <p>Enter your Slingr credentials and a purchase order number. Your Excel file will download when the Slingr data is ready.</p>
     <form id="sell-sheet-form" method="post" action="/sell-sheet">
+      <label for="email">Slingr email</label>
+      <input class="credential-input" id="email" name="email" type="email" maxlength="254" autocomplete="username" required autofocus>
+      <label for="password">Slingr password</label>
+      <div class="password-wrap">
+        <input class="credential-input" id="password" name="password" type="password" maxlength="512" autocomplete="current-password" required>
+        <button class="password-toggle" id="password-toggle" type="button" aria-label="Show password" title="Show password">👁</button>
+      </div>
       <label for="poNumber">PO number</label>
       <div class="controls">
-        <input id="poNumber" name="poNumber" inputmode="numeric" pattern="[0-9]+" maxlength="30" placeholder="e.g. 24382" autocomplete="off" required autofocus>
+        <input id="poNumber" name="poNumber" inputmode="text" maxlength="63" placeholder="24382 or 80316 / 45000038" autocomplete="off" required>
         <button id="submit-button" type="submit">Download Excel</button>
         <button id="stop-button" type="button" class="secondary-button" hidden>Stop</button>
       </div>
@@ -91,6 +105,8 @@ const PAGE = `<!doctype html>
     const form = document.getElementById('sell-sheet-form');
     const submitButton = document.getElementById('submit-button');
     const stopButton = document.getElementById('stop-button');
+    const passwordInput = document.getElementById('password');
+    const passwordToggle = document.getElementById('password-toggle');
     const status = document.getElementById('form-status');
     const jointProgress = document.getElementById('joint-progress');
     const jointBurn = document.getElementById('joint-burn');
@@ -133,11 +149,22 @@ const PAGE = `<!doctype html>
       submitButton.textContent = 'Download Excel';
       stopButton.hidden = true;
       stopButton.disabled = false;
+      passwordInput.value = '';
+      passwordInput.type = 'password';
+      passwordToggle.setAttribute('aria-label', 'Show password');
+      passwordToggle.title = 'Show password';
       if (activeController) {
         activeController = null;
       }
       stopProgress();
     };
+
+    passwordToggle.addEventListener('click', () => {
+      const visible = passwordInput.type === 'text';
+      passwordInput.type = visible ? 'password' : 'text';
+      passwordToggle.setAttribute('aria-label', visible ? 'Show password' : 'Hide password');
+      passwordToggle.title = visible ? 'Show password' : 'Hide password';
+    });
 
     stopButton.addEventListener('click', () => {
       if (activeController) {
@@ -150,9 +177,18 @@ const PAGE = `<!doctype html>
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
 
-      const poNumber = new FormData(form).get('poNumber')?.toString().trim() || '';
-      if (!/^[0-9]{1,30}$/.test(poNumber)) {
-        setStatus('Enter a valid numeric PO number.', 'error');
+      const formData = new FormData(form);
+      const email = formData.get('email')?.toString().trim() || '';
+      const password = formData.get('password')?.toString() || '';
+      const rawPoNumber = formData.get('poNumber')?.toString().trim() || '';
+      const poMatch = rawPoNumber.match(/^([0-9]{1,30})(?:[ ]*[/][ ]*([0-9]{1,30}))?$/);
+      const poNumber = poMatch ? (poMatch[2] ? poMatch[1] + ' / ' + poMatch[2] : poMatch[1]) : '';
+      if (!email || !password) {
+        setStatus('Enter your Slingr email and password.', 'error');
+        return;
+      }
+      if (!poNumber) {
+        setStatus('Enter a PO number like 24382 or 80316 / 45000038.', 'error');
         return;
       }
 
@@ -167,7 +203,7 @@ const PAGE = `<!doctype html>
         const response = await fetch(form.action, {
           method: 'POST',
           headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' },
-          body: new URLSearchParams({ poNumber }).toString(),
+          body: new URLSearchParams({ email, password, poNumber }).toString(),
           signal: activeController.signal,
         });
 
@@ -180,7 +216,7 @@ const PAGE = `<!doctype html>
         const downloadUrl = URL.createObjectURL(blob);
         const anchor = document.createElement('a');
         anchor.href = downloadUrl;
-        anchor.download = 'sell_sheet_' + poNumber + '.xlsx';
+        anchor.download = 'sell_sheet_' + poNumber.replace(/[^0-9]+/g, '_').replace(/^_+|_+$/g, '') + '.xlsx';
         anchor.click();
         URL.revokeObjectURL(downloadUrl);
         setStatus('Your sell sheet is ready.', 'success');
@@ -214,9 +250,10 @@ function isPoNotFoundError(error: unknown): boolean {
 
 async function generateSellSheetWithPoFallback(
   poNumber: string,
+  cfg: AppConfig,
 ): Promise<{ workbook: Buffer; resolvedPoNumber: string }> {
   try {
-    const workbook = await generateSellSheetBuffer(poNumber);
+    const workbook = await generateSellSheetBuffer(poNumber, cfg);
 
     return {
       workbook,
@@ -227,7 +264,7 @@ async function generateSellSheetWithPoFallback(
       throw error;
     }
 
-    if (poNumber.startsWith('0')) {
+    if (poNumber.startsWith('0') || poNumber.includes('/')) {
       throw error;
     }
 
@@ -238,7 +275,7 @@ async function generateSellSheetWithPoFallback(
     );
 
     try {
-      const workbook = await generateSellSheetBuffer(fallbackPoNumber);
+      const workbook = await generateSellSheetBuffer(fallbackPoNumber, cfg);
 
       console.log(
         `PO ${poNumber} resolved successfully as ${fallbackPoNumber}`,
@@ -259,7 +296,7 @@ async function generateSellSheetWithPoFallback(
 }
 
 function getErrorStatus(error: unknown): number {
-  if (error instanceof Error && /No scm\.workOrders record found|Multiple work orders returned|invalid PO|Enter a valid numeric PO number/i.test(error.message)) {
+  if (error instanceof Error && /No scm\.workOrders record found|Multiple work orders returned|invalid PO|Enter a valid PO number/i.test(error.message)) {
     return 404;
   }
   return 500;
@@ -300,15 +337,22 @@ const server = createServer(async (request, response) => {
   let body = '';
   for await (const chunk of request) {
     body += chunk;
-    if (Buffer.byteLength(body) > 1_024) {
+    if (Buffer.byteLength(body) > 4_096) {
       sendText(response, 413, 'Request is too large.');
       return;
     }
   }
 
-  const poNumber = new URLSearchParams(body).get('poNumber')?.trim() || '';
-  if (!/^\d{1,30}$/.test(poNumber)) {
-    sendText(response, 400, 'Enter a valid numeric PO number.');
+  const form = new URLSearchParams(body);
+  const email = form.get('email')?.trim() || '';
+  const password = form.get('password') || '';
+  const poNumber = normalizePoNumber(form.get('poNumber') || '');
+  if (!email || !password || email.length > 254 || password.length > 512) {
+    sendText(response, 400, 'Enter valid Slingr credentials.');
+    return;
+  }
+  if (!poNumber) {
+    sendText(response, 400, 'Enter a PO number like 24382 or 80316 / 45000038.');
     return;
   }
 
@@ -318,7 +362,7 @@ const server = createServer(async (request, response) => {
     const {
       workbook,
       resolvedPoNumber,
-    } = await generateSellSheetWithPoFallback(poNumber);
+    } = await generateSellSheetWithPoFallback(poNumber, { ...config, email, password });
 
     console.log(
       `Generated sell sheet for PO ${poNumber} using Slingr PO ${resolvedPoNumber} (${workbook.length} bytes)`,
@@ -326,7 +370,7 @@ const server = createServer(async (request, response) => {
 
     response.writeHead(200, {
       'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'content-disposition': `attachment; filename="sell_sheet_${poNumber}.xlsx"`,
+      'content-disposition': `attachment; filename="sell_sheet_${poNumberFilePart(poNumber)}.xlsx"`,
       'content-length': workbook.length,
       'cache-control': 'no-store',
       'x-content-type-options': 'nosniff',

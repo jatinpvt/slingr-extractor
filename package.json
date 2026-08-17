@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Generate OCS sell sheets from Weed Me Slingr purchase orders.",
+  "description": "Generate provincial sell sheets from Weed Me Slingr purchase orders.",
   "scripts": {
     "dev": "tsx src/server.ts",
     "generate": "tsx src/index.ts",

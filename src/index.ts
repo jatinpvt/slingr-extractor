@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { config } from './config.js';
+import { normalizePoNumber, poNumberFilePart } from './lib/poNumber.js';
 import { generateSellSheet, generateSellSheetBuffer } from './services/generateSellSheet.js';
 
 const PAGE = `<!doctype html>
@@ -19,6 +21,11 @@ const PAGE = `<!doctype html>
     p { color: #557064; line-height: 1.55; }
     form { margin-top: 28px; }
     label { display: block; margin-bottom: 8px; font-weight: 750; }
+    .credential-input { width: 100%; margin-bottom: 14px; }
+    .password-wrap { position: relative; margin-bottom: 14px; }
+    .password-wrap .credential-input { margin-bottom: 0; padding-right: 54px; }
+    .password-toggle { position: absolute; top: 6px; right: 6px; min-height: 36px; width: 40px; padding: 0; color: #216b40; background: transparent; font-size: 20px; line-height: 1; }
+    .password-toggle:hover { color: #185632; background: #edf5ef; }
     .controls { display: flex; gap: 10px; }
     input, button { min-height: 48px; border-radius: 10px; font: inherit; }
     input { min-width: 0; flex: 1; border: 1px solid #b7c9bd; padding: 0 14px; font-size: 18px; }
@@ -69,11 +76,18 @@ const PAGE = `<!doctype html>
   <main>
     <p class="eyebrow">Weed Me × Slingr</p>
     <h1>Create a sell sheet</h1>
-    <p>Enter an OCS purchase order number. Your Excel file will download when the Slingr data is ready.</p>
+    <p>Enter your Slingr credentials and a purchase order number. Your Excel file will download when the Slingr data is ready.</p>
     <form id="sell-sheet-form" method="post" action="/sell-sheet">
+      <label for="email">Slingr email</label>
+      <input class="credential-input" id="email" name="email" type="email" maxlength="254" autocomplete="username" required autofocus>
+      <label for="password">Slingr password</label>
+      <div class="password-wrap">
+        <input class="credential-input" id="password" name="password" type="password" maxlength="512" autocomplete="current-password" required>
+        <button class="password-toggle" id="password-toggle" type="button" aria-label="Show password" title="Show password">👁</button>
+      </div>
       <label for="poNumber">PO number</label>
       <div class="controls">
-        <input id="poNumber" name="poNumber" inputmode="numeric" pattern="[0-9]+" maxlength="30" placeholder="e.g. 24382" autocomplete="off" required autofocus>
+        <input id="poNumber" name="poNumber" inputmode="text" maxlength="63" placeholder="24382 or 80316 / 45000038" autocomplete="off" required>
         <button id="submit-button" type="submit">Download Excel</button>
         <button id="stop-button" type="button" class="secondary-button" hidden>Stop</button>
       </div>
@@ -90,6 +104,8 @@ const PAGE = `<!doctype html>
     const form = document.getElementById('sell-sheet-form');
     const submitButton = document.getElementById('submit-button');
     const stopButton = document.getElementById('stop-button');
+    const passwordInput = document.getElementById('password');
+    const passwordToggle = document.getElementById('password-toggle');
     const status = document.getElementById('form-status');
     const jointProgress = document.getElementById('joint-progress');
     const jointBurn = document.getElementById('joint-burn');
@@ -131,11 +147,22 @@ const PAGE = `<!doctype html>
       submitButton.textContent = 'Download Excel';
       stopButton.hidden = true;
       stopButton.disabled = false;
+      passwordInput.value = '';
+      passwordInput.type = 'password';
+      passwordToggle.setAttribute('aria-label', 'Show password');
+      passwordToggle.title = 'Show password';
       if (activeController) {
         activeController = null;
       }
       stopProgress();
     };
+
+    passwordToggle.addEventListener('click', () => {
+      const visible = passwordInput.type === 'text';
+      passwordInput.type = visible ? 'password' : 'text';
+      passwordToggle.setAttribute('aria-label', visible ? 'Show password' : 'Hide password');
+      passwordToggle.title = visible ? 'Show password' : 'Hide password';
+    });
 
     stopButton.addEventListener('click', () => {
       if (activeController) {
@@ -148,9 +175,18 @@ const PAGE = `<!doctype html>
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
 
-      const poNumber = new FormData(form).get('poNumber')?.toString().trim() || '';
-      if (!/^[0-9]{1,30}$/.test(poNumber)) {
-        setStatus('Enter a valid numeric PO number.', 'error');
+      const formData = new FormData(form);
+      const email = formData.get('email')?.toString().trim() || '';
+      const password = formData.get('password')?.toString() || '';
+      const rawPoNumber = formData.get('poNumber')?.toString().trim() || '';
+      const poMatch = rawPoNumber.match(/^([0-9]{1,30})(?:[ ]*[/][ ]*([0-9]{1,30}))?$/);
+      const poNumber = poMatch ? (poMatch[2] ? poMatch[1] + ' / ' + poMatch[2] : poMatch[1]) : '';
+      if (!email || !password) {
+        setStatus('Enter your Slingr email and password.', 'error');
+        return;
+      }
+      if (!poNumber) {
+        setStatus('Enter a PO number like 24382 or 80316 / 45000038.', 'error');
         return;
       }
 
@@ -165,7 +201,7 @@ const PAGE = `<!doctype html>
         const response = await fetch(form.action, {
           method: 'POST',
           headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' },
-          body: new URLSearchParams({ poNumber }).toString(),
+          body: new URLSearchParams({ email, password, poNumber }).toString(),
           signal: activeController.signal,
         });
 
@@ -178,7 +214,7 @@ const PAGE = `<!doctype html>
         const downloadUrl = URL.createObjectURL(blob);
         const anchor = document.createElement('a');
         anchor.href = downloadUrl;
-        anchor.download = 'sell_sheet_' + poNumber + '.xlsx';
+        anchor.download = 'sell_sheet_' + poNumber.replace(/[^0-9]+/g, '_').replace(/^_+|_+$/g, '') + '.xlsx';
         anchor.click();
         URL.revokeObjectURL(downloadUrl);
         setStatus('Your sell sheet is ready.', 'success');
@@ -255,7 +291,7 @@ export default async function handler(req: any, res: any): Promise<void> {
     } else {
       for await (const chunk of req) {
         body += chunk;
-        if (Buffer.byteLength(body) > 1_024) {
+        if (Buffer.byteLength(body) > 4_096) {
           res.statusCode = 413;
           res.setHeader('Content-Type', 'text/plain; charset=utf-8');
           res.end('Request is too large.');
@@ -264,19 +300,28 @@ export default async function handler(req: any, res: any): Promise<void> {
       }
     }
 
-    const poNumber = new URLSearchParams(body).get('poNumber')?.trim() || '';
-    if (!/^\d{1,30}$/.test(poNumber)) {
+    const form = new URLSearchParams(body);
+    const email = form.get('email')?.trim() || '';
+    const password = form.get('password') || '';
+    const poNumber = normalizePoNumber(form.get('poNumber') || '');
+    if (!email || !password || email.length > 254 || password.length > 512) {
       res.statusCode = 400;
       res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-      res.end('Enter a valid numeric PO number.');
+      res.end('Enter valid Slingr credentials.');
+      return;
+    }
+    if (!poNumber) {
+      res.statusCode = 400;
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      res.end('Enter a PO number like 24382 or 80316 / 45000038.');
       return;
     }
 
     try {
-      const workbook = await generateSellSheetBuffer(poNumber);
+      const workbook = await generateSellSheetBuffer(poNumber, { ...config, email, password });
       res.statusCode = 200;
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-      res.setHeader('Content-Disposition', `attachment; filename="sell_sheet_${poNumber}.xlsx"`);
+      res.setHeader('Content-Disposition', `attachment; filename="sell_sheet_${poNumberFilePart(poNumber)}.xlsx"`);
       res.setHeader('Cache-Control', 'no-store');
       res.end(workbook);
     } catch (error) {

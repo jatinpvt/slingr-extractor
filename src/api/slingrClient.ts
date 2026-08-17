@@ -7,6 +7,9 @@ export class SlingrClient {
   constructor(private readonly cfg: AppConfig) {}
 
   async login(): Promise<void> {
+    if (!this.cfg.email || !this.cfg.password) {
+      throw new Error('Slingr email and password are required.');
+    }
     const response = await this.requestRaw('/auth/login', {
       method: 'POST',
       headers: { 'content-type': 'application/json', accept: 'application/json' },

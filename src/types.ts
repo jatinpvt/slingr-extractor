@@ -33,6 +33,7 @@ export type WorkOrderItem = {
       unitProduct?: {
         id?: string;
         label?: string;
+        isRotating?: boolean | null;
         isVarietyPack?: boolean | null;
         cannabisWeight?: number | null;
         format?: Ref | null;
@@ -54,10 +55,10 @@ export type WorkOrderItem = {
       } | null;
     } | null;
   } | null;
-  numberOfUnits?: number | null;
-  unitsInACase?: number | null;
-  numberOfCases?: number | null;
-  amount?: number | null;
+  numberOfUnits?: string | number | null;
+  unitsInACase?: string | number | null;
+  numberOfCases?: string | number | null;
+  amount?: string | number | null;
   itemRecord?: Ref | null;
 };
 
@@ -65,9 +66,43 @@ export type WorkOrder = {
   id: string;
   label?: string;
   poNumber?: string | number | null;
-  customer?: Ref | null;
+  customer?: (Ref & {
+    type?: string | null;
+    board?: Ref | null;
+  }) | null;
   poDate?: string | null;
   items?: WorkOrderItem[];
+};
+
+export type ScmItem = {
+  id: string;
+  label?: string | null;
+  skuText?: string | number | null;
+  sku?: SkuValue;
+  unitGtin?: (Ref & { unitGtin?: string | null }) | null;
+  caseGtin?: Ref | null;
+  product?: WorkOrderItem['product'];
+  brand?: Ref | null;
+  profile?: Ref | null;
+  strain?: {
+    type?: string | null;
+  } | null;
+  numberOfUnits?: string | number | null;
+  unitsInACase?: string | number | null;
+  numberOfCases?: string | number | null;
+  amount?: string | number | null;
+  thcRanges?: string | null;
+  inputLotId?: InputLot | InputLot[] | null;
+  varietyProfiles?: Array<{
+    inputLotId?: InputLot | null;
+  }> | null;
+  thc?: string | number | null;
+  cbd?: string | number | null;
+  primaryProductLotId?: string | null;
+  packagingDate?: string | null;
+  skidChecked?: boolean | null;
+  executionStatus?: string | null;
+  tasksProgress?: string | number | null;
 };
 
 export type CaseProduct = {
@@ -83,7 +118,7 @@ export type ProductInventory = {
   caseProduct?: Ref | null;
   purchaseOrder?: Ref | null;
   item?: Ref | null;
-  inputLotId?: Ref[] | null;
+  inputLotId?: Array<Ref & { bulkLot?: string | null }> | null;
   primaryProductLotId?: string | null;
   packagingDate?: string | null;
   currentInventory?: number | null;
@@ -94,7 +129,7 @@ export type ProductInventory = {
   inReWork?: boolean | null;
 };
 
-export type Comparison = 'equal' | 'lessThan' | 'greaterThan' | string;
+export type Comparison = 'equal' | 'lessThan' | 'lessOrEqual' | 'greaterThan' | 'greaterOrEqual' | string;
 
 export type MeasurementValue = {
   comparison?: Comparison | null;
@@ -106,6 +141,10 @@ export type MeasurementValue = {
 export type InputLot = {
   id: string;
   label?: string;
+  strain?: (Ref & {
+    type?: string | null;
+    strain?: { type?: string | null } | null;
+  }) | null;
   bulkLot?: string | null;
   cannabinoids?: {
     thc?: MeasurementValue | null;
@@ -180,15 +219,31 @@ export type SellSheetRow = {
   _raw: {
     poNumber?: string | number | null;
     workOrderId: string;
+    workOrderItemId?: string;
     productId: string;
     poItemId?: string;
     itemRecordId?: string;
+    scmItemId?: string;
+    scmItemSkuText: string;
+    exactPortfolioId?: string;
+    portfolioIdSource: string;
+    scmItemInputLotId?: string;
+    scmItemInputLotLabel: string;
+    scmItemPrimaryProductLotId: string;
+    scmItemThc: string | number;
+    scmItemCbd: string | number;
+    scmItemThcRanges: string;
+    scmItemPackagingDate: string;
+    scmItemSkidChecked: boolean | '';
+    scmItemExecutionStatus: string;
+    scmItemTasksProgress: string | number;
     inventoryIds: string[];
     selectedInventoryId?: string;
     inputLotIds: string[];
     selectedInputLotId?: string;
     portfolioId?: string;
     portfolioSku?: string;
+    portfolioThcRange: string;
     listingProgram: string;
     msrpSourceValue: string | number;
     wholesalePriceSourceValue: string | number;
@@ -198,6 +253,7 @@ export type SellSheetRow = {
     rawInventoryCbd: string | number;
     rawInputLotThc: string;
     rawInputLotCbd: string;
+    fieldSources: Record<string, string>;
     generatedAt: string;
     warnings: string[];
   };

@@ -5,6 +5,7 @@ import { SlingrClient } from '../api/slingrClient.js';
 import { loadSellSheetData } from './loadData.js';
 import { buildSellSheetRows } from './buildSellSheet.js';
 import { createSellSheetWorkbookBuffer, writeSellSheetWorkbook } from './writeExcel.js';
+import { normalizePoNumber, poNumberFilePart } from '../lib/poNumber.js';
 
 async function loadSellSheetRows(poNumber: string, cfg: AppConfig): Promise<SellSheetRow[]> {
   const client = new SlingrClient(cfg);
@@ -12,18 +13,23 @@ async function loadSellSheetRows(poNumber: string, cfg: AppConfig): Promise<Sell
 
   console.log(`Loading PO ${poNumber}...`);
   const data = await loadSellSheetData(client, cfg, poNumber);
-  console.log(`Found ${(data.workOrder.items ?? []).length} PO line(s).`);
+  console.log(`Found ${(data.workOrder.items ?? []).length} PO line(s) for ${data.customerCode}.`);
 
-  return buildSellSheetRows({ ...data, cfg });
+  const { customerId, customerCode, ...loaded } = data;
+  return buildSellSheetRows({ ...loaded, cfg: { ...cfg, customerId, customerCode } });
 }
 
 export async function generateSellSheet(poNumber: string, outputPath?: string, cfg: AppConfig = config): Promise<string> {
-  const rows = await loadSellSheetRows(poNumber, cfg);
-  const out = outputPath || path.resolve(process.cwd(), `sell_sheet_${poNumber}.xlsx`);
+  const normalized = normalizePoNumber(poNumber);
+  if (!normalized) throw new Error('Enter a valid PO number.');
+  const rows = await loadSellSheetRows(normalized, cfg);
+  const out = outputPath || path.resolve(process.cwd(), `sell_sheet_${poNumberFilePart(normalized)}.xlsx`);
   await writeSellSheetWorkbook(out, rows);
   return out;
 }
 
 export async function generateSellSheetBuffer(poNumber: string, cfg: AppConfig = config): Promise<Buffer> {
-  return createSellSheetWorkbookBuffer(await loadSellSheetRows(poNumber, cfg));
+  const normalized = normalizePoNumber(poNumber);
+  if (!normalized) throw new Error('Enter a valid PO number.');
+  return createSellSheetWorkbookBuffer(await loadSellSheetRows(normalized, cfg));
 }

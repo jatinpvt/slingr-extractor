@@ -25,6 +25,15 @@ function json(body: unknown, status = 200, headers?: HeadersInit): Response {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('SlingrClient', () => {
+  it('rejects missing credentials before making a request', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(new SlingrClient({ ...cfg, email: '', password: '' }).login())
+      .rejects.toThrow('Slingr email and password are required.');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('deduplicates paginated records by ID and continues until total unique records', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json({ token: 'secret' }))

@@ -9,7 +9,18 @@ export function formatPercentage(value: string | number | null | undefined): str
 
 export function formatMeasuredPercentage(field: MeasurementValue | null | undefined): string {
   if (!field || field.value == null) return '';
-  const prefix = field.comparison === 'lessThan' ? '<' : field.comparison === 'greaterThan' ? '>' : '';
+  const prefixes: Record<string, string> = {
+    equal: '',
+    lessThan: '<',
+    lessOrEqual: '<=',
+    lessThanOrEqual: '<=',
+    greaterThan: '>',
+    greaterOrEqual: '>=',
+    greaterThanOrEqual: '>=',
+  };
+  const comparison = field.comparison || 'equal';
+  const prefix = prefixes[comparison];
+  if (prefix == null) return '';
   return `${prefix}${trimNumber(field.value)}%`;
 }
 

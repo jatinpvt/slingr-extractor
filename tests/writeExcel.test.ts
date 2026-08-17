@@ -8,11 +8,16 @@ const row: SellSheetRow = {
   costPerCase: 120, thcPercent: '28%', terps: 'A - 1.00%\nB - 0.50%\nC - 0.25%',
   totalTerpenePercent: '2%', cbdPercent: '<0.1%', casesAvailable: 9, listing: 'GL',
   _raw: {
-    poNumber: '123', workOrderId: 'wo', productId: 'p', poItemId: 'item', inventoryIds: ['inv'],
+    poNumber: '123', workOrderId: 'wo', workOrderItemId: 'item', productId: 'p', poItemId: 'item',
+    itemRecordId: 'item-record', scmItemId: 'scm-item', inventoryIds: ['inv'],
+    scmItemSkuText: '123_3x0.5g', exactPortfolioId: 'pf', portfolioIdSource: 'sku', scmItemInputLotId: 'lot',
+    scmItemInputLotLabel: 'LOT', scmItemPrimaryProductLotId: 'LOT', scmItemThc: '28.000%',
+    scmItemCbd: '&lt;0.100%', scmItemThcRanges: '25% - 30%',
+    scmItemPackagingDate: '', scmItemSkidChecked: '', scmItemExecutionStatus: '', scmItemTasksProgress: '',
     selectedInventoryId: 'inv', inputLotIds: ['lot'], selectedInputLotId: 'lot', portfolioId: 'pf',
-    portfolioSku: '123_3x0.5g', listingProgram: 'GL', msrpSourceValue: 20,
+    portfolioSku: '123_3x0.5g', portfolioThcRange: '', listingProgram: 'GL', msrpSourceValue: 20,
     wholesalePriceSourceValue: 10, landedCostSourceValue: 8, poAmount: 99,
-    rawInventoryThc: '28%', rawInventoryCbd: '', rawInputLotThc: '{}', rawInputLotCbd: '{}',
+    rawInventoryThc: '28%', rawInventoryCbd: '', rawInputLotThc: '{}', rawInputLotCbd: '{}', fieldSources: {},
     warnings: ['audit warning'], generatedAt: '2026-08-17T12:00:00.000Z',
   },
 };
@@ -38,6 +43,10 @@ describe('createSellSheetWorkbook', () => {
     expect(sheet.autoFilter).toEqual({ from: 'A1', to: 'P2' });
     expect(raw.state).toBe('hidden');
     expect(raw.getRow(1).values).toContain('warnings');
+    expect(raw.getRow(1).values).toContain('scm item ID');
+    expect(raw.getRow(1).values).toContain('portfolio ID source');
+    expect(raw.getRow(2).values).toContain('scm-item');
+    expect(raw.getRow(2).values).toContain('25% - 30%');
     expect(raw.getRow(2).values).toContain('audit warning');
   });
 });
