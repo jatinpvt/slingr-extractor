@@ -267,6 +267,32 @@ function shouldRunCli(): boolean {
   }
 }
 
+function isPoNotFoundError(error: unknown): boolean {
+  return error instanceof Error
+    && /No scm\.workOrders record found|PO .* could not be found|invalid PO/i.test(error.message);
+}
+
+async function generateSellSheetWithPoFallback(
+  poNumber: string,
+  cfg: typeof config,
+): Promise<Buffer> {
+  try {
+    return await generateSellSheetBuffer(poNumber, cfg);
+  } catch (error) {
+    if (!isPoNotFoundError(error) || poNumber.startsWith('0') || poNumber.includes('/')) {
+      throw error;
+    }
+
+    const fallbackPoNumber = `0${poNumber}`;
+    try {
+      return await generateSellSheetBuffer(fallbackPoNumber, cfg);
+    } catch (fallbackError) {
+      if (isPoNotFoundError(fallbackError)) throw error;
+      throw fallbackError;
+    }
+  }
+}
+
 export default async function handler(req: any, res: any): Promise<void> {
   if (!req || !res) {
     return;
@@ -318,7 +344,7 @@ export default async function handler(req: any, res: any): Promise<void> {
     }
 
     try {
-      const workbook = await generateSellSheetBuffer(poNumber, { ...config, email, password });
+      const workbook = await generateSellSheetWithPoFallback(poNumber, { ...config, email, password });
       res.statusCode = 200;
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
       res.setHeader('Content-Disposition', `attachment; filename="sell_sheet_${poNumberFilePart(poNumber)}.xlsx"`);
