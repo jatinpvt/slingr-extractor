@@ -1,6 +1,6 @@
 # Weed Me Slingr Sell Sheet Automation (TypeScript)
 
-Enter Slingr credentials and either any number of PO numbers or an Outlook calendar period. The app detects the province, retrieves related product/inventory/input-lot/portfolio data, joins it by stable record IDs, and downloads one combined Excel sell sheet.
+Select Ontario/OCS or Alberta/AGLC, enter Slingr credentials, then provide PO numbers or an Outlook calendar period. The app retrieves related product/inventory/input-lot/portfolio data, joins it by stable record IDs, and downloads one combined Excel sell sheet.
 
 ## Current output columns
 
@@ -32,9 +32,11 @@ npm run dev
 
 Open `http://127.0.0.1:3000`, enter your Slingr credentials, then choose manual PO entry or Outlook. Manual mode accepts any number of PO numbers separated by newlines, commas, or semicolons. Every PO uses the same leading-zero retry, and all results are merged into one brand-sorted workbook. Simple numbers and full composite numbers such as `80316 / 45000038` are accepted.
 
-Outlook mode currently supports Ontario/OCS. Choose last week, last month, the last N completed weeks/months, or an inclusive custom date range. Every matching PO is combined into the same workbook.
+Outlook mode supports Ontario/OCS and Alberta/AGLC. Choose last week, last month, the last N completed weeks/months, or an inclusive custom date range. Every matching PO is combined into the same workbook.
 
 Outlook events are considered Ontario when their subject, preview, location, or category contains `Ontario` or `OCS`. A PO must be explicitly labelled as `PO`/`Purchase Order`, or appear immediately after the Ontario/OCS marker. The loaded Slingr PO customer/board is checked again before inclusion.
+
+AGLC sections use `AGLC - PO <number>`. `Full PO` includes every line. Otherwise, each bullet must end in `- <number> Boxes`; only a PO line with the same complete product label and box count is included. Missing, mismatched, or ambiguous lines stop generation instead of guessing. AGLC workbooks omit the GL/FT1/FT2 column.
 
 Optional local port override:
 
@@ -98,7 +100,7 @@ Full portfolio pagination and inventory-based lot selection are retained only as
 
 The normal path follows `itemRecord -> scm.items -> inputLotId`. Inventory scoring is used only when that direct item/lot relationship is missing, and it never crosses the selected listing program. Multiple exact potency results are exported as grouped continuation rows instead of being averaged.
 
-The visible worksheet contains exactly the 16 requested columns. A hidden `_Raw` worksheet records source IDs, raw values, and ambiguity warnings.
+The Ontario worksheet contains the 16 requested columns. Alberta omits the inapplicable GL/FT1/FT2 column and contains 15. A hidden `_Raw` worksheet records source IDs, raw values, and ambiguity warnings.
 
 For a multi-PO workbook, rows remain separate by PO line and lot; quantities and potency are never combined across lots. Row groups are sorted globally by Brand and Product Name.
 

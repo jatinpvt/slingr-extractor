@@ -3,6 +3,8 @@
 ## Purchase order
 `GET /data/scm.workOrders?poNumber=<PO>&_size=...`
 
+Lookup order: exact PO, exact PO with a leading zero for simple numbers, then `poNumber=like(<PO>)`. A `like` result is accepted only when exactly one record contains the requested value as a complete slash-separated PO component; ambiguous substring matches are never guessed.
+
 Accepted input is either a simple numeric PO or a complete two-part PO. Two-part input is normalized to `80316 / 45000038`; partial-number guessing is intentionally not used.
 
 Relevant PO paths observed:
@@ -137,6 +139,6 @@ or, when configured:
 
 `GET /v1.0/users/{OUTLOOK_CALENDAR_USER}/calendars/{OUTLOOK_CALENDAR_ID}/calendarView`
 
-Current scope is Ontario/OCS only. Event subject, preview, location, and categories are searched conservatively for an Ontario/OCS marker and a PO number. Results are deduplicated, then every loaded Slingr work order is revalidated against its customer/board before inclusion. Power BI tier enrichment is intentionally deferred until its stable join key and field are confirmed.
+Ontario events are searched conservatively for an Ontario/OCS marker and a PO number. Alberta sections are read from the full Outlook body using `AGLC - PO <number>` headers. `Full PO` keeps every PO line; otherwise bullets ending in `- <number> Boxes` are matched against the complete Slingr unit-product label and exact `scm.items.numberOfCases`. Outlook provides no stable product ID, so matching is deliberately exact and fails on missing or ambiguous lines rather than using fuzzy name joins. Every loaded work order is revalidated against its province customer/board. Power BI tier enrichment remains deferred until its stable join key and field are confirmed.
 
 The landing page supplies `startDateTime` and exclusive `endDateTime` for last week, last month, the last N completed weeks/months, or a custom inclusive start/end selection. Graph pagination is followed for long ranges; there is no fixed 31-day application limit.

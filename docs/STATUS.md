@@ -1,7 +1,7 @@
 # Integration Status
 
 ## Ready
-- Manual multi-PO lookup by newline-, comma-, or semicolon-separated simple/full `poNumber` values (`24382`, `80316 / 45000038`), with per-PO leading-zero retry
+- Manual multi-PO lookup by newline-, comma-, or semicolon-separated simple/full `poNumber` values (`24382`, `80316 / 45000038`), with per-PO exact, leading-zero, then validated `like(...)` retry
 - Province/customer automatically selected from `workOrder.customer.board` for Inventory Building records, or directly from `workOrder.customer`
 - Exact PO row resolution through `workOrder.items[].itemRecord.id -> scm.items/{id}`
 - Per-request Slingr credentials on the landing page; credentials are not stored or logged
@@ -26,8 +26,11 @@
 - Variety packs export one row per exact lot for THC/CBD/terpenes/total terpenes, with all shared product cells vertically merged
 - Hidden `_Raw` worksheet with exact item/portfolio/lot IDs, operational status fields, source indicators, raw ranges, and warnings
 - Complete pagination checks and retries for temporary API failures
-- Ontario/OCS Outlook discovery through Microsoft Graph for last week, last month, last N completed weeks/months, or an inclusive custom date range, with province revalidation in Slingr
+- Ontario/OCS and Alberta/AGLC Outlook discovery through Microsoft Graph for last week, last month, last N completed weeks/months, or an inclusive custom date range, with province revalidation in Slingr
+- AGLC `Full PO` support and strict requested-product filtering by complete calendar label plus exact box count; unmatched or ambiguous requests fail visibly
+- Province selection for manual and Outlook sources; Alberta workbooks omit the inapplicable GL/FT1/FT2 column
 - Multi-PO generation using one Slingr login, preserving per-PO/per-lot rows and globally sorting row groups by Brand/Product Name
+- Exact duplicate visible row groups are removed at the final workbook boundary; differing lot, potency, price, availability, or listing values remain separate
 
 ## Rules still to validate
 - Whether the legacy Cases Available fallback should require `skidChecked === true`

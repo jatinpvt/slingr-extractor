@@ -68,4 +68,31 @@ describe('createSellSheetWorkbook', () => {
       expect(sheet.getRow(3).getCell(column).isMerged).toBe(false);
     }
   });
+
+  it('omits the listing column for Alberta/AGLC', () => {
+    const sheet = createSellSheetWorkbook([row], { includeListing: false }).getWorksheet('Sell Sheet')!;
+    expect(sheet.columnCount).toBe(15);
+    expect(sheet.getCell('O1').value).toBe('Cases Available');
+    expect(sheet.getRow(1).values).not.toContain('General Listing / FT 1 / FT 2');
+    expect(sheet.autoFilter).toEqual({ from: 'A1', to: 'O2' });
+  });
+
+  it('removes exact duplicate records across POs but keeps different lot results', () => {
+    const duplicate: SellSheetRow = {
+      ...row,
+      _raw: { ...row._raw, poNumber: '456', workOrderId: 'wo-2', workOrderItemId: 'item-2' },
+    };
+    const differentLot: SellSheetRow = {
+      ...duplicate,
+      thcPercent: '30%',
+      _raw: { ...duplicate._raw, poNumber: '789', workOrderId: 'wo-3', workOrderItemId: 'item-3' },
+    };
+    const workbook = createSellSheetWorkbook([row, duplicate, differentLot]);
+    const sheet = workbook.getWorksheet('Sell Sheet')!;
+    const raw = workbook.getWorksheet('_Raw')!;
+
+    expect(sheet.rowCount).toBe(3);
+    expect(sheet.getColumn(11).values.slice(1)).toEqual(['THC %', '28%', '30%']);
+    expect(raw.rowCount).toBe(3);
+  });
 });

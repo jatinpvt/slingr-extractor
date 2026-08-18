@@ -64,7 +64,62 @@ const RAW_HEADERS = [
 
 const THIN_BLACK: Partial<ExcelJS.Border> = { style: 'thin', color: { argb: 'FF000000' } };
 
-export function createSellSheetWorkbook(rows: SellSheetRow[]): ExcelJS.Workbook {
+export type SellSheetWorkbookOptions = { includeListing?: boolean };
+
+function visibleValues(row: SellSheetRow, includeListing: boolean): Array<string | number> {
+  const values: Array<string | number> = [
+    row.brand,
+    row.productName,
+    row.strainType,
+    row.format,
+    row.category,
+    row.sku,
+    row.msrp,
+    row.unitsPerCase,
+    row.costPerUnit,
+    row.costPerCase,
+    row.thcPercent,
+    row.terps,
+    row.totalTerpenePercent,
+    row.cbdPercent,
+    row.casesAvailable,
+  ];
+  if (includeListing) values.push(row.listing);
+  return values;
+}
+
+function deduplicateRows(rows: SellSheetRow[], includeListing: boolean): SellSheetRow[] {
+  const groups: SellSheetRow[][] = [];
+  for (const row of rows) {
+    const itemId = row._raw.workOrderItemId || row._raw.poItemId || row._raw.itemRecordId || row._raw.productId;
+    const key = `${row._raw.workOrderId}:${itemId}`;
+    const previous = groups.at(-1);
+    const previousRow = previous?.[0];
+    const previousItemId = previousRow
+      && (previousRow._raw.workOrderItemId || previousRow._raw.poItemId || previousRow._raw.itemRecordId || previousRow._raw.productId);
+    const previousKey = previousRow && `${previousRow._raw.workOrderId}:${previousItemId}`;
+    if (previous && previousKey === key) previous.push(row);
+    else groups.push([row]);
+  }
+
+  const seenGroups = new Set<string>();
+  const result: SellSheetRow[] = [];
+  for (const group of groups) {
+    const uniqueRows = [...new Map(group.map((row) => [JSON.stringify(visibleValues(row, includeListing)), row])).values()];
+    const signature = JSON.stringify(uniqueRows.map((row) => visibleValues(row, includeListing)).sort());
+    if (seenGroups.has(signature)) continue;
+    seenGroups.add(signature);
+    result.push(...uniqueRows);
+  }
+  return result;
+}
+
+export function createSellSheetWorkbook(
+  rows: SellSheetRow[],
+  options: SellSheetWorkbookOptions = {},
+): ExcelJS.Workbook {
+  const includeListing = options.includeListing !== false;
+  const exportRows = deduplicateRows(rows, includeListing);
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'Weed Me Sell Sheet Automation';
   workbook.created = new Date();
@@ -79,40 +134,21 @@ export function createSellSheetWorkbook(rows: SellSheetRow[]): ExcelJS.Workbook 
       printTitlesRow: '1:1',
     },
   });
-  ws.addRow([...SELL_SHEET_HEADERS]);
+  ws.addRow(includeListing ? [...SELL_SHEET_HEADERS] : [...SELL_SHEET_HEADERS.slice(0, -1)]);
 
-  for (const row of rows) {
-    ws.addRow([
-      row.brand,
-      row.productName,
-      row.strainType,
-      row.format,
-      row.category,
-      row.sku,
-      row.msrp,
-      row.unitsPerCase,
-      row.costPerUnit,
-      row.costPerCase,
-      row.thcPercent,
-      row.terps,
-      row.totalTerpenePercent,
-      row.cbdPercent,
-      row.casesAvailable,
-      row.listing,
-    ]);
-  }
+  for (const row of exportRows) ws.addRow(visibleValues(row, includeListing));
 
-  const sharedColumns = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 16];
-  for (let start = 0; start < rows.length; start += 1) {
-    const first = rows[start];
+  const sharedColumns = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, ...(includeListing ? [16] : [])];
+  for (let start = 0; start < exportRows.length; start += 1) {
+    const first = exportRows[start];
     if (first._raw.isVarietyPack !== true) continue;
     const groupId = first._raw.workOrderItemId || first._raw.poItemId || first._raw.itemRecordId;
     let end = start;
     while (
-      end + 1 < rows.length
-      && rows[end + 1]._raw.isVarietyPack === true
-      && rows[end + 1]._raw.workOrderId === first._raw.workOrderId
-      && (rows[end + 1]._raw.workOrderItemId || rows[end + 1]._raw.poItemId || rows[end + 1]._raw.itemRecordId) === groupId
+      end + 1 < exportRows.length
+      && exportRows[end + 1]._raw.isVarietyPack === true
+      && exportRows[end + 1]._raw.workOrderId === first._raw.workOrderId
+      && (exportRows[end + 1]._raw.workOrderItemId || exportRows[end + 1]._raw.poItemId || exportRows[end + 1]._raw.itemRecordId) === groupId
     ) end += 1;
     if (end > start) {
       for (const column of sharedColumns) ws.mergeCells(start + 2, column, end + 2, column);
@@ -125,10 +161,10 @@ export function createSellSheetWorkbook(rows: SellSheetRow[]): ExcelJS.Workbook 
   header.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF9C001A' } };
   header.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
   header.height = 52;
-  ws.autoFilter = { from: 'A1', to: `P${Math.max(1, ws.rowCount)}` };
+  ws.autoFilter = { from: 'A1', to: `${includeListing ? 'P' : 'O'}${Math.max(1, ws.rowCount)}` };
 
   const widths = [16, 42, 14, 14, 22, 16, 12, 14, 15, 15, 15, 28, 25, 15, 16, 25];
-  widths.forEach((width, index) => { ws.getColumn(index + 1).width = width; });
+  widths.slice(0, includeListing ? 16 : 15).forEach((width, index) => { ws.getColumn(index + 1).width = width; });
   ws.eachRow((row, rowNumber) => {
     row.eachCell({ includeEmpty: true }, (cell, columnNumber) => {
       cell.border = { top: THIN_BLACK, left: THIN_BLACK, bottom: THIN_BLACK, right: THIN_BLACK };
@@ -154,7 +190,7 @@ export function createSellSheetWorkbook(rows: SellSheetRow[]): ExcelJS.Workbook 
   const raw = workbook.addWorksheet('_Raw');
   raw.state = 'hidden';
   raw.addRow([...RAW_HEADERS]);
-  for (const row of rows) {
+  for (const row of exportRows) {
     const data = row._raw;
     raw.addRow([
       data.poNumber ?? '',
@@ -205,10 +241,17 @@ export function createSellSheetWorkbook(rows: SellSheetRow[]): ExcelJS.Workbook 
   return workbook;
 }
 
-export async function writeSellSheetWorkbook(outputPath: string, rows: SellSheetRow[]): Promise<void> {
-  await createSellSheetWorkbook(rows).xlsx.writeFile(outputPath);
+export async function writeSellSheetWorkbook(
+  outputPath: string,
+  rows: SellSheetRow[],
+  options: SellSheetWorkbookOptions = {},
+): Promise<void> {
+  await createSellSheetWorkbook(rows, options).xlsx.writeFile(outputPath);
 }
 
-export async function createSellSheetWorkbookBuffer(rows: SellSheetRow[]): Promise<Buffer> {
-  return Buffer.from(await createSellSheetWorkbook(rows).xlsx.writeBuffer());
+export async function createSellSheetWorkbookBuffer(
+  rows: SellSheetRow[],
+  options: SellSheetWorkbookOptions = {},
+): Promise<Buffer> {
+  return Buffer.from(await createSellSheetWorkbook(rows, options).xlsx.writeBuffer());
 }

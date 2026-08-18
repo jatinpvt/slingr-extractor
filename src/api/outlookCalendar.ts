@@ -4,6 +4,7 @@ export type OutlookEvent = {
   id: string;
   subject?: string | null;
   bodyPreview?: string | null;
+  body?: { content?: string | null; contentType?: string | null } | null;
   categories?: string[];
   location?: { displayName?: string | null } | null;
   start?: { dateTime?: string | null; timeZone?: string | null } | null;
@@ -58,7 +59,7 @@ export async function getOutlookCalendarEvents(
   const url = new URL(`https://graph.microsoft.com/v1.0/users/${user}${calendar}/calendarView`);
   url.searchParams.set('startDateTime', startDateTime);
   url.searchParams.set('endDateTime', endDateTime);
-  url.searchParams.set('$select', 'id,subject,bodyPreview,categories,location,start,end,isCancelled');
+  url.searchParams.set('$select', 'id,subject,bodyPreview,body,categories,location,start,end,isCancelled');
   url.searchParams.set('$orderby', 'start/dateTime');
   url.searchParams.set('$top', '250');
 

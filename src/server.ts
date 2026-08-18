@@ -36,40 +36,17 @@ const PAGE = `<!doctype html>
     button:disabled { opacity: 0.75; cursor: wait; }
     .secondary-button { background: #7a5c32; }
     .secondary-button:hover { background: #5e4526; }
-    .joint-progress { display: none; width: 100%; margin-top: 14px; }
-    .joint-progress.visible { display: block; }
-    .joint-track {
-      position: relative; height: 14px; border-radius: 999px; overflow: hidden;
-      border: 1px solid rgba(24, 50, 38, 0.14);
-      background: linear-gradient(90deg, #edf3ee 0%, #e4eee5 100%);
-      box-shadow: inset 0 2px 8px rgba(24, 50, 38, 0.08);
+    .generation-loader {
+      display: none; align-items: center; gap: 12px; margin-top: 14px; padding: 12px 14px;
+      border: 1px solid #d5e4d9; border-radius: 12px; color: #216b40; background: #f4f8f5; font-weight: 700;
     }
-    .joint-burn {
-      position: absolute; inset: 0 auto 0 0; width: 0%;
-      border-radius: inherit;
-      background: linear-gradient(90deg, #183226 0%, #216b40 26%, #3c8d5d 58%, #d9b74d 100%);
-      background-size: 200% 100%;
-      box-shadow: 0 0 16px rgba(33, 107, 64, 0.24), inset 0 0 18px rgba(255, 255, 255, 0.32);
-      transition: width 0.25s ease-out;
-      animation: progressShimmer 1.4s linear infinite;
+    .generation-loader.visible { display: flex; }
+    .loading-spinner {
+      width: 28px; height: 28px; flex: 0 0 28px; border: 4px solid #d8e7dc; border-radius: 50%;
+      border-top-color: #216b40; border-right-color: #d9b74d; box-shadow: 0 0 12px rgba(33, 107, 64, 0.12);
+      animation: loaderSpin 0.8s linear infinite;
     }
-    .joint-burn::after {
-      content: '';
-      position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
-      width: 12px; height: 12px; border-radius: 50%;
-      background: radial-gradient(circle, rgba(255,255,255,0.95) 0%, #f5e6a9 32%, #d9b74d 60%, rgba(24,50,38,0.7) 100%);
-      box-shadow: 0 0 14px rgba(217, 183, 77, 0.7);
-    }
-    .joint-core {
-      position: absolute; left: 8px; top: 2px; width: 32px; height: 10px; border-radius: 999px;
-      background: linear-gradient(90deg, rgba(24, 50, 38, 0.82), rgba(94, 129, 94, 0.78));
-      box-shadow: inset 0 0 10px rgba(255, 255, 255, 0.18);
-      opacity: 0.8;
-    }
-    @keyframes progressShimmer {
-      0% { background-position: 0% 0%; }
-      100% { background-position: 200% 0%; }
-    }
+    @keyframes loaderSpin { to { transform: rotate(360deg); } }
     .status { min-height: 22px; margin-top: 12px; color: #2f7650; font-weight: 700; }
     .status.error { color: #8b1d1d; }
     .status.success { color: #226c44; }
@@ -81,7 +58,7 @@ const PAGE = `<!doctype html>
   <main>
     <p class="eyebrow">Weed Me × Slingr</p>
     <h1>Create a sell sheet</h1>
-    <p>Combine any PO numbers, or find Ontario POs from an Outlook calendar period.</p>
+    <p>Combine PO numbers, or find Ontario or Alberta POs from an Outlook calendar period.</p>
     <form id="sell-sheet-form" method="post" action="/api/sell-sheet">
       <label for="email">Slingr email</label>
       <input class="credential-input" id="email" name="email" type="email" maxlength="254" autocomplete="username" required autofocus>
@@ -90,6 +67,11 @@ const PAGE = `<!doctype html>
         <input class="credential-input" id="password" name="password" type="password" maxlength="512" autocomplete="current-password" required>
         <button class="password-toggle" id="password-toggle" type="button" aria-label="Show password" title="Show password">👁</button>
       </div>
+      <label for="province">Province</label>
+      <select class="credential-input" id="province" name="province">
+        <option value="ontario">Ontario / OCS</option>
+        <option value="alberta">Alberta / AGLC</option>
+      </select>
       <label for="mode">Source</label>
       <select class="credential-input" id="mode" name="mode">
         <option value="manual">Enter PO numbers</option>
@@ -100,10 +82,6 @@ const PAGE = `<!doctype html>
         <textarea class="credential-input" id="poNumbers" name="poNumbers" inputmode="text" placeholder="One per line, or separated by commas&#10;24382&#10;109418&#10;80316 / 45000038" autocomplete="off" required></textarea>
       </div>
       <div id="outlook-fields" hidden>
-        <label for="province">Province</label>
-        <select class="credential-input" id="province" name="province">
-          <option value="ontario">Ontario / OCS</option>
-        </select>
         <label for="range-type">Date range</label>
         <select class="credential-input" id="range-type" name="rangeType">
           <option value="last_week">Last week</option>
@@ -132,11 +110,9 @@ const PAGE = `<!doctype html>
         <button id="submit-button" type="submit">Download Excel</button>
         <button id="stop-button" type="button" class="secondary-button" hidden>Stop</button>
       </div>
-      <div id="joint-progress" class="joint-progress" aria-live="polite" aria-label="Generation progress">
-        <div class="joint-track">
-          <div class="joint-core"></div>
-          <div id="joint-burn" class="joint-burn"></div>
-        </div>
+      <div id="generation-loader" class="generation-loader" role="status" aria-live="polite">
+        <span class="loading-spinner" aria-hidden="true"></span>
+        <span>Preparing your Excel file…</span>
       </div>
       <p id="form-status" class="status" aria-live="polite"></p>
     </form>
@@ -147,6 +123,7 @@ const PAGE = `<!doctype html>
     const stopButton = document.getElementById('stop-button');
     const passwordInput = document.getElementById('password');
     const passwordToggle = document.getElementById('password-toggle');
+    const provinceInput = document.getElementById('province');
     const modeInput = document.getElementById('mode');
     const poInput = document.getElementById('poNumbers');
     const manualFields = document.getElementById('manual-fields');
@@ -160,10 +137,8 @@ const PAGE = `<!doctype html>
     const customEndInput = document.getElementById('custom-end');
     const outlookRange = document.getElementById('outlook-range');
     const status = document.getElementById('form-status');
-    const jointProgress = document.getElementById('joint-progress');
-    const jointBurn = document.getElementById('joint-burn');
+    const generationLoader = document.getElementById('generation-loader');
     let activeController = null;
-    let activeProgressTimer = null;
 
     const selectedRange = () => {
       const today = new Date();
@@ -234,29 +209,12 @@ const PAGE = `<!doctype html>
     };
 
     const stopProgress = () => {
-      if (activeProgressTimer) {
-        cancelAnimationFrame(activeProgressTimer);
-      }
-      jointBurn.style.width = '0%';
-      jointProgress.classList.remove('visible');
+      generationLoader.classList.remove('visible');
     };
 
     const beginProgress = () => {
-      let start = null;
-      const duration = 4200;
       stopProgress();
-      jointProgress.classList.add('visible');
-      const step = (time) => {
-        if (start === null) start = time;
-        const elapsed = time - start;
-        const raw = Math.min(100, (elapsed / duration) * 100);
-        const eased = raw;
-        jointBurn.style.width = eased + '%';
-        if (eased < 100) {
-          activeProgressTimer = requestAnimationFrame(step);
-        }
-      };
-      activeProgressTimer = requestAnimationFrame(step);
+      generationLoader.classList.add('visible');
     };
 
     const resetControls = () => {
@@ -302,6 +260,7 @@ const PAGE = `<!doctype html>
       const formData = new FormData(form);
       const email = formData.get('email')?.toString().trim() || '';
       const password = formData.get('password')?.toString() || '';
+      const province = provinceInput.value === 'alberta' ? 'alberta' : 'ontario';
       const mode = formData.get('mode') === 'outlook' ? 'outlook' : 'manual';
       const rawPoNumbers = formData.get('poNumbers')?.toString().trim() || '';
       const poNumbers = rawPoNumbers.replace(/[,;]+/g, String.fromCharCode(10))
@@ -316,7 +275,7 @@ const PAGE = `<!doctype html>
         return;
       }
 
-      const request = { email, password, mode };
+      const request = { email, password, province, mode };
       let range = null;
       if (mode === 'manual') {
         request.poNumbers = rawPoNumbers;
@@ -326,7 +285,6 @@ const PAGE = `<!doctype html>
           setStatus('Enter a valid Outlook date range.', 'error');
           return;
         }
-        request.province = 'ontario';
         request.startDateTime = range.start.toISOString();
         request.endDateTime = range.end.toISOString();
       }
@@ -335,7 +293,8 @@ const PAGE = `<!doctype html>
       submitButton.disabled = true;
       stopButton.hidden = false;
       submitButton.textContent = 'Generating...';
-      setStatus(mode === 'outlook' ? 'Finding Ontario POs in Outlook...' : 'Creating a sell sheet from ' + poNumbers.length + ' PO(s)...', '');
+      const provinceLabel = province === 'alberta' ? 'Alberta/AGLC' : 'Ontario/OCS';
+      setStatus(mode === 'outlook' ? 'Finding ' + provinceLabel + ' POs in Outlook...' : 'Creating a ' + provinceLabel + ' sell sheet from ' + poNumbers.length + ' PO(s)...', '');
       beginProgress();
 
       try {
@@ -435,6 +394,7 @@ const server = createServer(async (request, response) => {
   const form = new URLSearchParams(body);
   const email = form.get('email')?.trim() || '';
   const password = form.get('password') || '';
+  const province = form.get('province') === 'alberta' ? 'alberta' : 'ontario';
   const mode = form.get('mode') === 'outlook' ? 'outlook' : 'manual';
   const poNumbers = parsePoNumbers(form.get('poNumbers') || form.get('poNumber') || '');
   if (!email || !password || email.length > 254 || password.length > 512) {
@@ -448,17 +408,17 @@ const server = createServer(async (request, response) => {
 
   try {
     const filename = mode === 'outlook'
-      ? `sell_sheet_ontario_${(form.get('startDateTime') || '').slice(0, 10)}_${(form.get('endDateTime') || '').slice(0, 10)}.xlsx`
+      ? `sell_sheet_${province}_${(form.get('startDateTime') || '').slice(0, 10)}_${(form.get('endDateTime') || '').slice(0, 10)}.xlsx`
       : poNumbers.length === 1
       ? `sell_sheet_${poNumberFilePart(poNumbers[0])}.xlsx`
       : `sell_sheet_${poNumbers.length}_pos.xlsx`;
     let workbook: Buffer;
     if (mode === 'outlook') {
-      console.log('Starting Outlook sell sheet generation for Ontario');
+      console.log(`Starting Outlook sell sheet generation for ${province}`);
       const result = await generateOutlookSellSheetBuffer({
         startDateTime: form.get('startDateTime') || '',
         endDateTime: form.get('endDateTime') || '',
-        province: 'ontario',
+        province,
         slingrConfig: { ...config, email, password },
         outlookConfig,
       });
@@ -466,7 +426,7 @@ const server = createServer(async (request, response) => {
       console.log(`Generated Outlook sell sheet from ${result.poNumbers.length} PO(s); skipped ${result.skippedPoNumbers.length}.`);
     } else {
       console.log(`Starting sell sheet generation for ${poNumbers.length} PO(s)`);
-      const result = await generateBatchSellSheetBuffer(poNumbers, undefined, { ...config, email, password });
+      const result = await generateBatchSellSheetBuffer(poNumbers, province, { ...config, email, password });
       workbook = result.workbook;
       console.log(`Generated sell sheet for ${result.resolvedPoNumbers.length} PO(s) (${workbook.length} bytes)`);
     }

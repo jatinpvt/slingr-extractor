@@ -199,6 +199,18 @@ export type PagedResponse<T> = {
   items?: T[];
 };
 
+export type SellSheetProvince = 'ontario' | 'alberta';
+
+export type RequestedProduct = {
+  name: string;
+  boxes: number;
+};
+
+export type PurchaseOrderSelection = {
+  poNumber: string;
+  requestedProducts?: RequestedProduct[];
+};
+
 export type SellSheetRow = {
   brand: string;
   productName: string;
