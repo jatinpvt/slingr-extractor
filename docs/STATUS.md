@@ -26,9 +26,9 @@
 - Variety packs export one row per exact lot for THC/CBD/terpenes/total terpenes, with all shared product cells vertically merged
 - Hidden `_Raw` worksheet with exact item/portfolio/lot IDs, operational status fields, source indicators, raw ranges, and warnings
 - Complete pagination checks and retries for temporary API failures
-- Ontario/OCS and Alberta/AGLC Outlook discovery through Microsoft Graph for last week, last month, last N completed weeks/months, or an inclusive custom date range, with province revalidation in Slingr
-- AGLC `Full PO` support and strict requested-product filtering by complete calendar label plus exact box count; unmatched or ambiguous requests fail visibly
-- Province selection for manual and Outlook sources; Alberta workbooks omit the inapplicable GL/FT1/FT2 column
+- Ontario/OCS and Alberta/AGLC discovery from `scm.workOrders.targetDeliveryDate` for the previous completed week or one custom date
+- Province selection for manual and delivery-date sources; Alberta workbooks omit the inapplicable GL/FT1/FT2 column
+- Outlook/Microsoft Graph/SharePoint integration and credentials removed
 - Multi-PO generation using one Slingr login, preserving per-PO/per-lot rows and globally sorting row groups by Brand/Product Name
 - Exact duplicate visible row groups are removed at the final workbook boundary; differing lot, potency, price, availability, or listing values remain separate
 

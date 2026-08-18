@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { SlingrClient } from '../src/api/slingrClient.js';
-import { getWorkOrderByLikePoNumber } from '../src/api/workOrders.js';
+import { getWorkOrderByLikePoNumber, getWorkOrdersByTargetDeliveryDate } from '../src/api/workOrders.js';
 
 describe('work-order partial lookup', () => {
   it('accepts one exact PO component from a like query', async () => {
@@ -23,5 +23,13 @@ describe('work-order partial lookup', () => {
     ] })) } as unknown as SlingrClient;
 
     await expect(getWorkOrderByLikePoNumber(client, '80418')).rejects.toThrow('Multiple work orders returned');
+  });
+
+  it('loads every work order for an exact target delivery date', async () => {
+    const getAll = vi.fn(async () => [{ id: 'one' }, { id: 'two' }]);
+    const client = { getAll } as unknown as SlingrClient;
+
+    await expect(getWorkOrdersByTargetDeliveryDate(client, '2026-08-11')).resolves.toHaveLength(2);
+    expect(getAll).toHaveBeenCalledWith('scm.workOrders', { targetDeliveryDate: '2026-08-11' });
   });
 });

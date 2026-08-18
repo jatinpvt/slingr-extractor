@@ -130,15 +130,10 @@ Program rule:
 - `ft === false` maps to GL
 - `ft === true` requires an explicit linked inventory/PO Tier 1 or Tier 2 label; the boolean alone is never guessed
 
-## Outlook calendar
-Microsoft Graph application authentication uses the client-credentials flow. Calendar events are read through:
+## Delivery-date discovery
 
-`GET /v1.0/users/{OUTLOOK_CALENDAR_USER}/calendarView`
+The landing page queries Slingr directly for each selected date:
 
-or, when configured:
+`GET /data/scm.workOrders?targetDeliveryDate=YYYY-MM-DD`
 
-`GET /v1.0/users/{OUTLOOK_CALENDAR_USER}/calendars/{OUTLOOK_CALENDAR_ID}/calendarView`
-
-Ontario events are searched conservatively for an Ontario/OCS marker and a PO number. Alberta sections are read from the full Outlook body using `AGLC - PO <number>` headers. `Full PO` keeps every PO line; otherwise bullets ending in `- <number> Boxes` are matched against the complete Slingr unit-product label and exact `scm.items.numberOfCases`. Outlook provides no stable product ID, so matching is deliberately exact and fails on missing or ambiguous lines rather than using fuzzy name joins. Every loaded work order is revalidated against its province customer/board. Power BI tier enrichment remains deferred until its stable join key and field are confirmed.
-
-The landing page supplies `startDateTime` and exclusive `endDateTime` for last week, last month, the last N completed weeks/months, or a custom inclusive start/end selection. Graph pagination is followed for long ranges; there is no fixed 31-day application limit.
+Last week means the previous completed Monday through Sunday and therefore performs seven exact-date queries. Custom date performs one. Results are paginated, deduplicated by work-order ID, filtered to the selected province customer/board, and then run through the normal PO generation path. Outlook, Microsoft Graph, and SharePoint are not used.

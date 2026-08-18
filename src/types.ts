@@ -71,6 +71,7 @@ export type WorkOrder = {
     board?: Ref | null;
   }) | null;
   poDate?: string | null;
+  targetDeliveryDate?: string | null;
   items?: WorkOrderItem[];
 };
 
@@ -200,16 +201,6 @@ export type PagedResponse<T> = {
 };
 
 export type SellSheetProvince = 'ontario' | 'alberta';
-
-export type RequestedProduct = {
-  name: string;
-  boxes: number;
-};
-
-export type PurchaseOrderSelection = {
-  poNumber: string;
-  requestedProducts?: RequestedProduct[];
-};
 
 export type SellSheetRow = {
   brand: string;

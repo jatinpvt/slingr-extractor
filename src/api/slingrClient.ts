@@ -33,7 +33,7 @@ export class SlingrClient {
     return this.get<T>(`/data/${encodeURIComponent(entity)}/${encodeURIComponent(id)}`);
   }
 
-  async getAll<T>(entity: string): Promise<T[]> {
+  async getAll<T>(entity: string, query: Record<string, string | number | boolean | undefined> = {}): Promise<T[]> {
     const byId = new Map<string, T>();
     const withoutId: T[] = [];
     const seenOffsets = new Set<string>();
@@ -47,6 +47,7 @@ export class SlingrClient {
         seenOffsets.add(offset);
       }
       const response = await this.get<PagedResponse<T>>(`/data/${encodeURIComponent(entity)}`, {
+        ...query,
         _size: this.cfg.pageSize,
         ...(offset ? { _offset: offset } : {}),
       });

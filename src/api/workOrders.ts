@@ -28,3 +28,10 @@ export async function getWorkOrderByLikePoNumber(client: SlingrClient, poNumber:
   if (matches.length === 0) throw new Error(`No scm.workOrders record found for PO ${poNumber} using like lookup`);
   throw new Error(`Multiple work orders returned for PO ${poNumber} using like lookup.`);
 }
+
+export async function getWorkOrdersByTargetDeliveryDate(
+  client: SlingrClient,
+  targetDeliveryDate: string,
+): Promise<WorkOrder[]> {
+  return client.getAll<WorkOrder>('scm.workOrders', { targetDeliveryDate });
+}

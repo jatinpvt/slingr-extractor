@@ -1,12 +1,11 @@
 #!/usr/bin/env node
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { config, outlookConfig } from './config.js';
+import { config } from './config.js';
 import { parsePoNumbers, poNumberFilePart } from './lib/poNumber.js';
-import { generateBatchSellSheetBuffer, generateSellSheet } from './services/generateSellSheet.js';
-import { generateOutlookSellSheetBuffer } from './services/generateOutlookSellSheet.js';
+import { generateBatchSellSheetBuffer, generateDeliveryDateSellSheetBuffer, generateSellSheet } from './services/generateSellSheet.js';
 
-const PAGE = `<!doctype html>
+export const PAGE = `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -32,7 +31,6 @@ const PAGE = `<!doctype html>
     input, select, textarea { min-width: 0; flex: 1; border: 1px solid #b7c9bd; padding: 0 14px; font-size: 18px; background: white; }
     textarea { min-height: 116px; padding-block: 12px; resize: vertical; }
     input:focus, select:focus, textarea:focus { outline: 3px solid #a7d9b9; border-color: #287747; }
-    .date-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
     button { border: 0; padding: 0 18px; color: white; background: #216b40; font-weight: 750; cursor: pointer; }
     button:hover { background: #185632; }
     button:disabled { opacity: 0.75; cursor: wait; }
@@ -53,14 +51,14 @@ const PAGE = `<!doctype html>
     .status.error { color: #8b1d1d; }
     .status.success { color: #226c44; }
     .hint { margin: -4px 0 14px; font-size: 14px; }
-    @media (max-width: 480px) { main { padding: 28px 22px; } .controls { flex-direction: column; } .date-grid { grid-template-columns: 1fr; } }
+    @media (max-width: 480px) { main { padding: 28px 22px; } .controls { flex-direction: column; } }
   </style>
 </head>
 <body>
   <main>
     <p class="eyebrow">Weed Me × Slingr</p>
     <h1>Create a sell sheet</h1>
-    <p>Combine PO numbers, or find Ontario or Alberta POs from an Outlook calendar period.</p>
+    <p>Enter PO numbers, or find work orders by their Slingr delivery date.</p>
     <form id="sell-sheet-form" method="post" action="/api/sell-sheet">
       <label for="email">Slingr email</label>
       <input class="credential-input" id="email" name="email" type="email" maxlength="254" autocomplete="username" required autofocus>
@@ -77,36 +75,23 @@ const PAGE = `<!doctype html>
       <label for="mode">Source</label>
       <select class="credential-input" id="mode" name="mode">
         <option value="manual">Enter PO numbers</option>
-        <option value="outlook">Outlook calendar</option>
+        <option value="delivery_date">Delivery date</option>
       </select>
       <div id="manual-fields">
         <label for="poNumbers">PO numbers</label>
         <textarea class="credential-input" id="poNumbers" name="poNumbers" inputmode="text" placeholder="One per line, or separated by commas&#10;24382&#10;109418&#10;80316 / 45000038" autocomplete="off" required></textarea>
       </div>
-      <div id="outlook-fields" hidden>
-        <label for="range-type">Date range</label>
+      <div id="delivery-date-fields" hidden>
+        <label for="range-type">Delivery date</label>
         <select class="credential-input" id="range-type" name="rangeType">
           <option value="last_week">Last week</option>
-          <option value="last_month">Last month</option>
-          <option value="last_n_weeks">Last X weeks</option>
-          <option value="last_n_months">Last X months</option>
-          <option value="custom">Custom date range</option>
+          <option value="custom">Custom date</option>
         </select>
-        <div id="range-count-fields" hidden>
-          <label id="range-count-label" for="range-count">Number of weeks</label>
-          <input class="credential-input" id="range-count" name="rangeCount" type="number" min="1" max="520" value="2">
+        <div id="custom-date-field" hidden>
+          <label for="custom-date">Custom delivery date</label>
+          <input class="credential-input" id="custom-date" name="customDate" type="date">
         </div>
-        <div id="custom-range-fields" class="date-grid" hidden>
-          <div>
-            <label for="custom-start">Start date</label>
-            <input class="credential-input" id="custom-start" name="customStart" type="date">
-          </div>
-          <div>
-            <label for="custom-end">End date</label>
-            <input class="credential-input" id="custom-end" name="customEnd" type="date">
-          </div>
-        </div>
-        <p id="outlook-range" class="hint"></p>
+        <p id="delivery-date-summary" class="hint"></p>
       </div>
       <div class="controls">
         <button id="submit-button" type="submit">Download Excel</button>
@@ -129,79 +114,66 @@ const PAGE = `<!doctype html>
     const modeInput = document.getElementById('mode');
     const poInput = document.getElementById('poNumbers');
     const manualFields = document.getElementById('manual-fields');
-    const outlookFields = document.getElementById('outlook-fields');
+    const deliveryDateFields = document.getElementById('delivery-date-fields');
     const rangeTypeInput = document.getElementById('range-type');
-    const rangeCountFields = document.getElementById('range-count-fields');
-    const rangeCountLabel = document.getElementById('range-count-label');
-    const rangeCountInput = document.getElementById('range-count');
-    const customRangeFields = document.getElementById('custom-range-fields');
-    const customStartInput = document.getElementById('custom-start');
-    const customEndInput = document.getElementById('custom-end');
-    const outlookRange = document.getElementById('outlook-range');
+    const customDateField = document.getElementById('custom-date-field');
+    const customDateInput = document.getElementById('custom-date');
+    const deliveryDateSummary = document.getElementById('delivery-date-summary');
     const status = document.getElementById('form-status');
     const generationLoader = document.getElementById('generation-loader');
     let activeController = null;
 
-    const selectedRange = () => {
+    const dateValue = (date) => [
+      date.getFullYear(),
+      String(date.getMonth() + 1).padStart(2, '0'),
+      String(date.getDate()).padStart(2, '0'),
+    ].join('-');
+
+    const selectedDeliveryDates = () => {
+      if (rangeTypeInput.value === 'custom') {
+        return /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.test(customDateInput.value) ? [customDateInput.value] : [];
+      }
       const today = new Date();
       const currentMonday = new Date(today);
       currentMonday.setHours(0, 0, 0, 0);
       currentMonday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
-      const currentMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-      const type = rangeTypeInput.value;
-      let start;
-      let end;
-      if (type === 'custom') {
-        if (!customStartInput.value || !customEndInput.value) return null;
-        start = new Date(customStartInput.value + 'T00:00:00');
-        end = new Date(customEndInput.value + 'T00:00:00');
-        end.setDate(end.getDate() + 1);
-      } else if (type === 'last_month' || type === 'last_n_months') {
-        const count = type === 'last_month' ? 1 : Number(rangeCountInput.value);
-        if (!Number.isInteger(count) || count < 1) return null;
-        end = currentMonth;
-        start = new Date(end.getFullYear(), end.getMonth() - count, 1);
-      } else {
-        const count = type === 'last_week' ? 1 : Number(rangeCountInput.value);
-        if (!Number.isInteger(count) || count < 1) return null;
-        end = currentMonday;
-        start = new Date(end);
-        start.setDate(start.getDate() - (7 * count));
+      const start = new Date(currentMonday);
+      start.setDate(start.getDate() - 7);
+      const dates = [];
+      for (let offset = 0; offset < 7; offset += 1) {
+        const date = new Date(start);
+        date.setDate(start.getDate() + offset);
+        dates.push(dateValue(date));
       }
-      if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || end <= start) return null;
-      return { start, end };
+      return dates;
     };
 
-    const updateRange = () => {
-      const type = rangeTypeInput.value;
-      const usesCount = type === 'last_n_weeks' || type === 'last_n_months';
-      const custom = type === 'custom';
-      rangeCountFields.hidden = !usesCount;
-      customRangeFields.hidden = !custom;
-      rangeCountInput.required = usesCount;
-      customStartInput.required = custom;
-      customEndInput.required = custom;
-      rangeCountLabel.textContent = type === 'last_n_months' ? 'Number of months' : 'Number of weeks';
-      const range = selectedRange();
-      if (!range) {
-        outlookRange.textContent = custom ? 'Choose both start and end dates.' : 'Enter a valid period.';
+    const updateDeliveryDate = () => {
+      const custom = rangeTypeInput.value === 'custom';
+      customDateField.hidden = !custom;
+      customDateInput.required = custom && modeInput.value === 'delivery_date';
+      const dates = selectedDeliveryDates();
+      if (dates.length === 0) {
+        deliveryDateSummary.textContent = 'Choose a delivery date.';
         return;
       }
       const display = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
-      outlookRange.textContent = display.format(range.start) + ' through ' + display.format(new Date(range.end.getTime() - 1));
+      const first = new Date(dates[0] + 'T00:00:00');
+      const last = new Date(dates[dates.length - 1] + 'T00:00:00');
+      deliveryDateSummary.textContent = dates.length === 1
+        ? display.format(first)
+        : display.format(first) + ' through ' + display.format(last);
     };
 
     const updateMode = () => {
-      const outlook = modeInput.value === 'outlook';
-      manualFields.hidden = outlook;
-      outlookFields.hidden = !outlook;
-      poInput.required = !outlook;
-      if (outlook) {
-        updateRange();
+      const byDate = modeInput.value === 'delivery_date';
+      manualFields.hidden = byDate;
+      deliveryDateFields.hidden = !byDate;
+      poInput.required = !byDate;
+      if (byDate) {
+        updateDeliveryDate();
       } else {
-        rangeCountInput.required = false;
-        customStartInput.required = false;
-        customEndInput.required = false;
+        customDateInput.required = false;
       }
     };
 
@@ -242,10 +214,8 @@ const PAGE = `<!doctype html>
     });
 
     modeInput.addEventListener('change', updateMode);
-    rangeTypeInput.addEventListener('change', updateRange);
-    rangeCountInput.addEventListener('input', updateRange);
-    customStartInput.addEventListener('change', updateRange);
-    customEndInput.addEventListener('change', updateRange);
+    rangeTypeInput.addEventListener('change', updateDeliveryDate);
+    customDateInput.addEventListener('change', updateDeliveryDate);
     updateMode();
 
     stopButton.addEventListener('click', () => {
@@ -263,7 +233,7 @@ const PAGE = `<!doctype html>
       const email = formData.get('email')?.toString().trim() || '';
       const password = formData.get('password')?.toString() || '';
       const province = provinceInput.value === 'alberta' ? 'alberta' : 'ontario';
-      const mode = formData.get('mode') === 'outlook' ? 'outlook' : 'manual';
+      const mode = formData.get('mode') === 'delivery_date' ? 'delivery_date' : 'manual';
       const rawPoNumbers = formData.get('poNumbers')?.toString().trim() || '';
       const poNumbers = rawPoNumbers.replace(/[,;]+/g, String.fromCharCode(10))
         .split(String.fromCharCode(10)).map((value) => value.trim()).filter(Boolean);
@@ -278,17 +248,16 @@ const PAGE = `<!doctype html>
       }
 
       const request = { email, password, province, mode };
-      let range = null;
+      let deliveryDates = [];
       if (mode === 'manual') {
         request.poNumbers = rawPoNumbers;
       } else {
-        range = selectedRange();
-        if (!range) {
-          setStatus('Enter a valid Outlook date range.', 'error');
+        deliveryDates = selectedDeliveryDates();
+        if (deliveryDates.length === 0) {
+          setStatus('Choose a valid delivery date.', 'error');
           return;
         }
-        request.startDateTime = range.start.toISOString();
-        request.endDateTime = range.end.toISOString();
+        request.deliveryDates = deliveryDates.join(',');
       }
 
       activeController = new AbortController();
@@ -296,7 +265,7 @@ const PAGE = `<!doctype html>
       stopButton.hidden = false;
       submitButton.textContent = 'Generating...';
       const provinceLabel = province === 'alberta' ? 'Alberta/AGLC' : 'Ontario/OCS';
-      setStatus(mode === 'outlook' ? 'Finding ' + provinceLabel + ' POs in Outlook...' : 'Creating a ' + provinceLabel + ' sell sheet from ' + poNumbers.length + ' PO(s)...', '');
+      setStatus(mode === 'delivery_date' ? 'Finding ' + provinceLabel + ' work orders by delivery date...' : 'Creating a ' + provinceLabel + ' sell sheet from ' + poNumbers.length + ' PO(s)...', '');
       beginProgress();
 
       try {
@@ -316,8 +285,8 @@ const PAGE = `<!doctype html>
         const downloadUrl = URL.createObjectURL(blob);
         const anchor = document.createElement('a');
         anchor.href = downloadUrl;
-        anchor.download = mode === 'outlook'
-          ? 'sell_sheet_ontario_' + range.start.toISOString().slice(0, 10) + '_' + new Date(range.end.getTime() - 1).toISOString().slice(0, 10) + '.xlsx'
+        anchor.download = mode === 'delivery_date'
+          ? 'sell_sheet_' + province + '_' + deliveryDates[0] + (deliveryDates.length > 1 ? '_' + deliveryDates[deliveryDates.length - 1] : '') + '.xlsx'
           : validPoNumbers.length === 1
           ? 'sell_sheet_' + validPoNumbers[0].replace(/[^0-9]+/g, '_').replace(/^_+|_+$/g, '') + '.xlsx'
           : 'sell_sheet_' + validPoNumbers.length + '_pos.xlsx';
@@ -417,8 +386,9 @@ export default async function handler(req: any, res: any): Promise<void> {
     const email = form.get('email')?.trim() || '';
     const password = form.get('password') || '';
     const province = form.get('province') === 'alberta' ? 'alberta' : 'ontario';
-    const mode = form.get('mode') === 'outlook' ? 'outlook' : 'manual';
+    const mode = form.get('mode') === 'delivery_date' ? 'delivery_date' : 'manual';
     const poNumbers = parsePoNumbers(form.get('poNumbers') || form.get('poNumber') || '');
+    const deliveryDates = (form.get('deliveryDates') || '').split(',').map((value) => value.trim()).filter(Boolean);
     if (!email || !password || email.length > 254 || password.length > 512) {
       res.statusCode = 400;
       res.setHeader('Content-Type', 'text/plain; charset=utf-8');
@@ -431,22 +401,19 @@ export default async function handler(req: any, res: any): Promise<void> {
       res.end('Enter valid PO numbers, one per line or separated by commas.');
       return;
     }
+    if (mode === 'delivery_date' && deliveryDates.length === 0) {
+      res.statusCode = 400;
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      res.end('Choose a valid delivery date.');
+      return;
+    }
 
     try {
-      const result = mode === 'outlook'
-        ? await generateOutlookSellSheetBuffer({
-          startDateTime: form.get('startDateTime') || '',
-          endDateTime: form.get('endDateTime') || '',
-          province,
-          slingrConfig: { ...config, email, password },
-          outlookConfig,
-        }).then((outlookResult) => ({
-          workbook: outlookResult.workbook,
-          resolvedPoNumbers: outlookResult.poNumbers,
-        }))
+      const result = mode === 'delivery_date'
+        ? await generateDeliveryDateSellSheetBuffer(deliveryDates, province, { ...config, email, password })
         : await generateBatchSellSheetBuffer(poNumbers, province, { ...config, email, password });
-      const filename = mode === 'outlook'
-        ? `sell_sheet_${province}_${(form.get('startDateTime') || '').slice(0, 10)}_${(form.get('endDateTime') || '').slice(0, 10)}.xlsx`
+      const filename = mode === 'delivery_date'
+        ? `sell_sheet_${province}_${deliveryDates[0]}${deliveryDates.length > 1 ? `_${deliveryDates.at(-1)}` : ''}.xlsx`
         : result.resolvedPoNumbers.length === 1
         ? `sell_sheet_${poNumberFilePart(result.resolvedPoNumbers[0])}.xlsx`
         : `sell_sheet_${result.resolvedPoNumbers.length}_pos.xlsx`;
@@ -459,8 +426,8 @@ export default async function handler(req: any, res: any): Promise<void> {
       const message = error instanceof Error ? error.message : String(error);
       res.statusCode = 500;
       res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-      res.end(mode === 'outlook'
-        ? `The Outlook sell sheet could not be generated: ${message}`
+      res.end(mode === 'delivery_date'
+        ? `The delivery-date sell sheet could not be generated: ${message}`
         : `The sell sheet could not be generated for ${poNumbers.length} PO(s): ${message}`);
     }
     return;

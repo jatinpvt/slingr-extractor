@@ -43,8 +43,12 @@ describe('SlingrClient', () => {
     const client = new SlingrClient(cfg);
     await client.login();
 
-    await expect(client.getAll<{ id: string }>('things')).resolves.toEqual([{ id: 'a' }, { id: 'b' }]);
+    await expect(client.getAll<{ id: string }>('things', { targetDeliveryDate: '2026-08-11' }))
+      .resolves.toEqual([{ id: 'a' }, { id: 'b' }]);
     expect(fetchMock).toHaveBeenCalledTimes(3);
+    for (const call of fetchMock.mock.calls.slice(1)) {
+      expect(new URL(String(call[0])).searchParams.get('targetDeliveryDate')).toBe('2026-08-11');
+    }
   });
 
   it('throws when pagination ends before the advertised unique total', async () => {

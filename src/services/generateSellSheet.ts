@@ -1,13 +1,12 @@
 import path from 'node:path';
 import { config, type AppConfig } from '../config.js';
-import type { PurchaseOrderSelection, RequestedProduct, SellSheetProvince, SellSheetRow } from '../types.js';
+import type { SellSheetProvince, SellSheetRow, WorkOrder } from '../types.js';
 import { SlingrClient } from '../api/slingrClient.js';
-import { getWorkOrderByLikePoNumber } from '../api/workOrders.js';
+import { getWorkOrderByLikePoNumber, getWorkOrdersByTargetDeliveryDate } from '../api/workOrders.js';
 import { mapLimit } from '../lib/concurrency.js';
 import { normalizePoNumber, poNumberFilePart } from '../lib/poNumber.js';
 import { buildSellSheetRows } from './buildSellSheet.js';
 import { loadSellSheetData } from './loadData.js';
-import { selectPurchaseOrderItems } from './selectPurchaseOrderItems.js';
 import { createSellSheetWorkbookBuffer, writeSellSheetWorkbook } from './writeExcel.js';
 
 type LoadedRows = {
@@ -26,7 +25,6 @@ async function loadRows(
   client: SlingrClient,
   poNumber: string,
   cfg: AppConfig,
-  requestedProducts?: RequestedProduct[],
 ): Promise<LoadedRows> {
   const normalized = normalizePoNumber(poNumber);
   if (!normalized) throw new Error('Enter a valid PO number.');
@@ -34,11 +32,10 @@ async function loadRows(
   const load = async (candidate: string): Promise<LoadedRows> => {
     console.log(`Loading PO ${candidate}...`);
     const data = await loadSellSheetData(client, cfg, candidate);
-    const workOrder = selectPurchaseOrderItems(data.workOrder, data.scmItemsById, requestedProducts);
-    console.log(`Found ${(data.workOrder.items ?? []).length} PO line(s) for ${data.customerCode}; using ${(workOrder.items ?? []).length}.`);
+    console.log(`Found ${(data.workOrder.items ?? []).length} PO line(s) for ${data.customerCode}.`);
     const { customerId, customerCode, ...loaded } = data;
     return {
-      rows: buildSellSheetRows({ ...loaded, workOrder, cfg: { ...cfg, customerId, customerCode } }),
+      rows: buildSellSheetRows({ ...loaded, cfg: { ...cfg, customerId, customerCode } }),
       resolvedPoNumber: normalizePoNumber(String(data.workOrder.poNumber ?? '')) || candidate,
       customerId,
       customerCode,
@@ -109,31 +106,38 @@ function isProvince(result: LoadedRows, province: SellSheetProvince, cfg: AppCon
     : /\b(?:Alberta|AGLC)\b/i.test(result.customerCode);
 }
 
-function normalizeSelections(values: Array<string | PurchaseOrderSelection>): PurchaseOrderSelection[] {
-  const selections = new Map<string, PurchaseOrderSelection>();
-  for (const value of values) {
-    const poNumber = normalizePoNumber(typeof value === 'string' ? value : value.poNumber);
-    if (!poNumber) continue;
-    const incoming = typeof value === 'string' ? { poNumber } : { ...value, poNumber };
-    const current = selections.get(poNumber);
-    if (!current) {
-      selections.set(poNumber, incoming);
-      continue;
+function isWorkOrderProvince(workOrder: WorkOrder, province: SellSheetProvince, cfg: AppConfig): boolean {
+  const customerId = workOrder.customer?.board?.id || workOrder.customer?.id || '';
+  const customerCode = workOrder.customer?.board?.code
+    || workOrder.customer?.board?.label
+    || workOrder.customer?.code
+    || workOrder.customer?.label
+    || '';
+  return province === 'ontario'
+    ? customerId === cfg.customerId || /\b(?:Ontario|OCS)\b/i.test(customerCode)
+    : /\b(?:Alberta|AGLC)\b/i.test(customerCode);
+}
+
+function normalizeDeliveryDates(values: string[]): string[] {
+  const dates = [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+  if (dates.length === 0) throw new Error('Choose a delivery date.');
+  if (dates.length > 7) throw new Error('Choose one custom delivery date or Last week.');
+  for (const date of dates) {
+    const parsed = new Date(`${date}T00:00:00Z`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) {
+      throw new Error(`Invalid delivery date: ${date}`);
     }
-    if (current.requestedProducts === undefined || incoming.requestedProducts === undefined) {
-      selections.set(poNumber, { poNumber });
-      continue;
-    }
-    const products = [...current.requestedProducts, ...incoming.requestedProducts];
-    selections.set(poNumber, {
-      poNumber,
-      requestedProducts: [...new Map(products.map((product) => [
-        `${product.name.toLocaleLowerCase()}\0${product.boxes}`,
-        product,
-      ])).values()],
-    });
   }
-  return [...selections.values()];
+  return dates.sort();
+}
+
+function normalizePoNumbers(values: string[]): string[] {
+  const poNumbers = new Set<string>();
+  for (const value of values) {
+    const poNumber = normalizePoNumber(value);
+    if (poNumber) poNumbers.add(poNumber);
+  }
+  return [...poNumbers];
 }
 
 export async function generateSellSheet(
@@ -158,19 +162,28 @@ export async function generateSellSheetBuffer(
 }
 
 export async function generateBatchSellSheetBuffer(
-  poNumbers: Array<string | PurchaseOrderSelection>,
+  poNumbers: string[],
   province?: SellSheetProvince,
   cfg: AppConfig = config,
 ): Promise<{ workbook: Buffer; resolvedPoNumbers: string[]; skippedPoNumbers: string[] }> {
-  const selections = normalizeSelections(poNumbers);
-  if (selections.length === 0) throw new Error('No valid PO numbers were provided.');
+  const normalized = normalizePoNumbers(poNumbers);
+  if (normalized.length === 0) throw new Error('No valid PO numbers were provided.');
   const client = await authenticatedClient(cfg);
-  const loaded = await mapLimit(selections, 2, async (selection) => {
+  return generateBatchWithClient(client, normalized, province, cfg);
+}
+
+async function generateBatchWithClient(
+  client: SlingrClient,
+  poNumbers: string[],
+  province: SellSheetProvince | undefined,
+  cfg: AppConfig,
+): Promise<{ workbook: Buffer; resolvedPoNumbers: string[]; skippedPoNumbers: string[] }> {
+  const loaded = await mapLimit(poNumbers, 2, async (poNumber) => {
     try {
-      return await loadRows(client, selection.poNumber, cfg, selection.requestedProducts);
+      return await loadRows(client, poNumber, cfg);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      throw new Error(`PO ${selection.poNumber}: ${message}`);
+      throw new Error(`PO ${poNumber}: ${message}`);
     }
   });
   const included = province ? loaded.filter((result) => isProvince(result, province, cfg)) : loaded;
@@ -184,4 +197,26 @@ export async function generateBatchSellSheetBuffer(
     resolvedPoNumbers: included.map((result) => result.resolvedPoNumber),
     skippedPoNumbers: skipped.map((result) => result.resolvedPoNumber),
   };
+}
+
+export async function generateDeliveryDateSellSheetBuffer(
+  deliveryDates: string[],
+  province: SellSheetProvince,
+  cfg: AppConfig = config,
+): Promise<{ workbook: Buffer; resolvedPoNumbers: string[]; skippedPoNumbers: string[] }> {
+  const dates = normalizeDeliveryDates(deliveryDates);
+  const client = await authenticatedClient(cfg);
+  const dateResults = await mapLimit(dates, 2, async (date) => {
+    console.log(`Loading work orders for delivery date ${date}...`);
+    return getWorkOrdersByTargetDeliveryDate(client, date);
+  });
+  const workOrders = [...new Map(dateResults.flat().map((workOrder) => [workOrder.id, workOrder])).values()];
+  const poNumbers = workOrders
+    .filter((workOrder) => isWorkOrderProvince(workOrder, province, cfg))
+    .map((workOrder) => normalizePoNumber(String(workOrder.poNumber ?? '')))
+    .filter((poNumber): poNumber is string => Boolean(poNumber));
+  if (poNumbers.length === 0) {
+    throw new Error(`No ${province === 'ontario' ? 'Ontario/OCS' : 'Alberta/AGLC'} work orders were found for the selected delivery date${dates.length === 1 ? '' : 's'}.`);
+  }
+  return generateBatchWithClient(client, normalizePoNumbers(poNumbers), province, cfg);
 }
