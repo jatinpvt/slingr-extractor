@@ -1,6 +1,6 @@
 # Weed Me Slingr Sell Sheet Automation (TypeScript)
 
-Enter Slingr credentials and a PO number on the local landing page. The app detects the province from the PO, retrieves its related product/inventory/input-lot/portfolio data, joins it by stable record IDs, and downloads an Excel sell sheet.
+Enter Slingr credentials and either any number of PO numbers or an Outlook calendar period. The app detects the province, retrieves related product/inventory/input-lot/portfolio data, joins it by stable record IDs, and downloads one combined Excel sell sheet.
 
 ## Current output columns
 
@@ -22,13 +22,19 @@ npm install
 
 The landing page sends each user's credentials only for that generation request; it does not save or log them. For CLI use, copy `.env.example` to `.env` and add that user's credentials. Never commit `.env`.
 
+For Outlook batch generation, register a Microsoft Entra application with the Microsoft Graph `Calendars.Read` application permission and admin consent. Configure `MICROSOFT_TENANT_ID`, `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`, and `OUTLOOK_CALENDAR_USER`. `OUTLOOK_CALENDAR_ID` is optional and defaults to that user's main calendar.
+
 ## Run the landing page
 
 ```powershell
 npm run dev
 ```
 
-Open `http://127.0.0.1:3000`, enter your Slingr credentials and PO number, and select **Download Excel**. Simple numbers and full composite numbers such as `80316 / 45000038` are accepted. No province selection is needed: the work order's customer/board relationship determines it.
+Open `http://127.0.0.1:3000`, enter your Slingr credentials, then choose manual PO entry or Outlook. Manual mode accepts any number of PO numbers separated by newlines, commas, or semicolons. Every PO uses the same leading-zero retry, and all results are merged into one brand-sorted workbook. Simple numbers and full composite numbers such as `80316 / 45000038` are accepted.
+
+Outlook mode currently supports Ontario/OCS. Choose last week, last month, the last N completed weeks/months, or an inclusive custom date range. Every matching PO is combined into the same workbook.
+
+Outlook events are considered Ontario when their subject, preview, location, or category contains `Ontario` or `OCS`. A PO must be explicitly labelled as `PO`/`Purchase Order`, or appear immediately after the Ontario/OCS marker. The loaded Slingr PO customer/board is checked again before inclusion.
 
 Optional local port override:
 
@@ -58,12 +64,13 @@ npm run generate -- 24382 --output "C:\Sell Sheets\sell_sheet_24382.xlsx"
 
 1. `POST /auth/login`
 2. `GET /data/scm.workOrders?poNumber=<PO>`
-3. `GET /data/scm.items/{itemRecordId}` once for each distinct PO item record
-4. `GET /data/crm.portfolios/{id}` through the exact `scm.items` portfolio relationship
+3. In Outlook mode, Microsoft Graph `calendarView` for the selected user and chosen date range
+4. `GET /data/scm.items/{itemRecordId}` once for each distinct PO item record
+5. `GET /data/crm.portfolios/{id}` through the exact `scm.items` portfolio relationship
    - If Strain Type is still blank, query `crm.portfolios?caseProduct=...` for exact same-product consensus
-5. `GET /data/pmd.products.caseProducts/{productId}` for each resolved PO product
-6. `GET /data/productionManagement.inputLots?bulkLot=...` using `scm.items.inputLotId.bulkLot` for detailed terpene/lab fields
-7. paginate `GET /data/scm.productsInventory`, then filter locally for current availability
+6. `GET /data/pmd.products.caseProducts/{productId}` for each resolved PO product
+7. `GET /data/productionManagement.inputLots?bulkLot=...` using `scm.items.inputLotId.bulkLot` for detailed terpene/lab fields
+8. paginate `GET /data/scm.productsInventory`, then filter locally for current availability
 
 Full portfolio pagination and inventory-based lot selection are retained only as defensive fallbacks for incomplete legacy rows.
 
@@ -77,8 +84,8 @@ Full portfolio pagination and inventory-based lot selection are retained only as
 - `SKU`: `scm.items.skuText`, then matching PO province entry fallback
 - `MSRP`: exact related portfolio `currentPrice.msrpPerUnit`
 - `Units / Case`: `scm.items.unitsInACase`, then PO fallback
-- `Cost per Unit`: exact related portfolio `currentPrice.wholesalePricePerUnit`
-- `Cost per Case`: direct Cost per Unit × Units / Case
+- `Cost per Unit`: exact PO amount ÷ cases ÷ units per case; portfolio wholesale fallback only when PO totals are missing
+- `Cost per Case`: exact PO amount ÷ cases; portfolio wholesale × units fallback only when PO totals are missing
 - `Cases Available`: exact `scm.items.numberOfCases`; legacy inventory calculation is used only when it is missing
 - `THC %`: exact `scm.items`/selected-lot result; comparisons such as `<` are preserved, while ranges and non-percentage values stay blank
 - `CBD %`: exact `scm.items`/selected-lot result, preserving comparison signs and displayed precision
@@ -92,6 +99,8 @@ Full portfolio pagination and inventory-based lot selection are retained only as
 The normal path follows `itemRecord -> scm.items -> inputLotId`. Inventory scoring is used only when that direct item/lot relationship is missing, and it never crosses the selected listing program. Multiple exact potency results are exported as grouped continuation rows instead of being averaged.
 
 The visible worksheet contains exactly the 16 requested columns. A hidden `_Raw` worksheet records source IDs, raw values, and ambiguity warnings.
+
+For a multi-PO workbook, rows remain separate by PO line and lot; quantities and potency are never combined across lots. Row groups are sorted globally by Brand and Product Name.
 
 ## Tests
 

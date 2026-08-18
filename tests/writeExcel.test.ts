@@ -49,4 +49,23 @@ describe('createSellSheetWorkbook', () => {
     expect(raw.getRow(2).values).toContain('25% - 30%');
     expect(raw.getRow(2).values).toContain('audit warning');
   });
+
+  it('merges shared variety-pack cells while keeping lot results separate', () => {
+    const first = { ...row, _raw: { ...row._raw, isVarietyPack: true } };
+    const second: SellSheetRow = {
+      ...first,
+      brand: '', productName: '', strainType: '', format: '', category: '', sku: '',
+      msrp: '', unitsPerCase: '', costPerUnit: '', costPerCase: '', casesAvailable: '', listing: '',
+      thcPercent: '30%', terps: 'D - 0.75%', totalTerpenePercent: '2.5%', cbdPercent: '0.05%',
+      _raw: { ...first._raw, selectedInputLotId: 'lot-2' },
+    };
+    const sheet = createSellSheetWorkbook([first, second]).getWorksheet('Sell Sheet')!;
+
+    for (const column of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 16]) {
+      expect(sheet.getRow(3).getCell(column).master.address).toBe(sheet.getRow(2).getCell(column).address);
+    }
+    for (const column of [11, 12, 13, 14]) {
+      expect(sheet.getRow(3).getCell(column).isMerged).toBe(false);
+    }
+  });
 });

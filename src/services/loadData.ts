@@ -34,8 +34,11 @@ function portfolioRelationIds(item: ScmItem | undefined): string[] {
 }
 
 function scmInputLots(item: ScmItem | undefined): InputLot[] {
-  if (!item?.inputLotId) return [];
-  return Array.isArray(item.inputLotId) ? item.inputLotId : [item.inputLotId];
+  const lots = [
+    ...(Array.isArray(item?.inputLotId) ? item.inputLotId : item?.inputLotId ? [item.inputLotId] : []),
+    ...(item?.varietyProfiles ?? []).flatMap((profile) => profile.inputLotId ? [profile.inputLotId] : []),
+  ];
+  return [...new Map(lots.map((lot) => [lot.id, lot])).values()];
 }
 
 async function missingRecordIsUndefined<T>(load: () => Promise<T>): Promise<T | undefined> {

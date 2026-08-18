@@ -224,6 +224,7 @@ export type SellSheetRow = {
     poItemId?: string;
     itemRecordId?: string;
     scmItemId?: string;
+    isVarietyPack?: boolean;
     scmItemSkuText: string;
     exactPortfolioId?: string;
     portfolioIdSource: string;

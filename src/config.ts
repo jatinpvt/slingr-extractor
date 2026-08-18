@@ -27,3 +27,13 @@ export const config = {
 };
 
 export type AppConfig = typeof config;
+
+export const outlookConfig = {
+  tenantId: process.env.MICROSOFT_TENANT_ID?.trim() || '',
+  clientId: process.env.MICROSOFT_CLIENT_ID?.trim() || '',
+  clientSecret: process.env.MICROSOFT_CLIENT_SECRET || '',
+  calendarUser: process.env.OUTLOOK_CALENDAR_USER?.trim() || '',
+  calendarId: process.env.OUTLOOK_CALENDAR_ID?.trim() || '',
+};
+
+export type OutlookConfig = typeof outlookConfig;

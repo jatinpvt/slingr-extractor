@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizePoNumber, poNumberFilePart } from '../src/lib/poNumber.js';
+import { normalizePoNumber, parsePoNumbers, poNumberFilePart } from '../src/lib/poNumber.js';
 
 describe('PO number handling', () => {
   it('accepts simple and full slash-separated PO numbers', () => {
@@ -13,5 +13,13 @@ describe('PO number handling', () => {
     expect(normalizePoNumber('80316 /')).toBeNull();
     expect(normalizePoNumber('/ 45000038')).toBeNull();
     expect(normalizePoNumber('PO 80316 / 45000038')).toBeNull();
+  });
+
+  it('parses, normalizes, and deduplicates a PO list', () => {
+    expect(parsePoNumbers('24382\n109418, 80316/45000038; 24382')).toEqual([
+      '24382',
+      '109418',
+      '80316 / 45000038',
+    ]);
   });
 });

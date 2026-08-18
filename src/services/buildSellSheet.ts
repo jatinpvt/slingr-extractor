@@ -216,8 +216,11 @@ function exactPortfolioRelations(item: ScmItem | undefined): Array<{ id: string;
 }
 
 function scmInputLots(item: ScmItem | undefined): InputLot[] {
-  if (!item?.inputLotId) return [];
-  return Array.isArray(item.inputLotId) ? item.inputLotId : [item.inputLotId];
+  const lots = [
+    ...(Array.isArray(item?.inputLotId) ? item.inputLotId : item?.inputLotId ? [item.inputLotId] : []),
+    ...(item?.varietyProfiles ?? []).flatMap((profile) => profile.inputLotId ? [profile.inputLotId] : []),
+  ];
+  return [...new Map(lots.map((lot) => [lot.id, lot])).values()];
 }
 
 function comparableSku(value: unknown): string {
@@ -226,8 +229,8 @@ function comparableSku(value: unknown): string {
 
 function programFromLabel(label: string | null | undefined): Program {
   if (!label) return '';
-  if (/\b(?:tier\s*2|t2)\b/i.test(label)) return 'FT 2';
-  if (/\b(?:tier\s*1|t1)\b/i.test(label)) return 'FT 1';
+  if (/\b(?:tier\s*2|ft\s*2|t2)\b/i.test(label)) return 'FT 2';
+  if (/\b(?:tier\s*1|ft\s*1|t1)\b/i.test(label)) return 'FT 1';
   if (/\b(?:general\s+listing|gl)\b/i.test(label)) return 'GL';
   if (/\bOCS\s+(?:replenishment\s+)?inventory\b/i.test(label) && !/\bFT\b/i.test(label)) return 'GL';
   return '';
@@ -668,6 +671,15 @@ export function buildSellSheetRows(args: {
     const wholesale = portfolio?.currentPrice?.wholesalePricePerUnit;
     const unitsPerCase = resolvedItem.unitsInACase ?? resolvedItem.product?.caseInformation?.quantity ?? '';
     const units = finiteNumber(unitsPerCase);
+    const poAmount = finiteNumber(item.amount ?? resolvedItem.amount ?? '');
+    const poCases = finiteNumber(item.numberOfCases ?? resolvedItem.numberOfCases ?? '');
+    const poUnits = finiteNumber(item.unitsInACase ?? item.product?.caseInformation?.quantity ?? unitsPerCase);
+    const poCostPerCase = poAmount != null && poCases != null && poCases > 0
+      ? Number((poAmount / poCases).toFixed(4))
+      : undefined;
+    const poCostPerUnit = poCostPerCase != null && poUnits != null && poUnits > 0
+      ? Number((poCostPerCase / poUnits).toFixed(4))
+      : undefined;
     const terps = selectedInputLot
       ? terpenesFromInputLot(selectedInputLot) || 'NA'
       : program === 'FT 2' || inputLotIds.length > 0 || unpairedDirectMulti ? 'NA' : '';
@@ -687,6 +699,7 @@ export function buildSellSheetRows(args: {
     });
     const scmUnit = scmItem?.product?.caseInformation?.unitProduct;
     const poUnit = item.product?.caseInformation?.unitProduct;
+    const isVarietyPack = scmUnit?.isVarietyPack === true || poUnit?.isVarietyPack === true;
     const productNameFromScm = Boolean(
       scmUnit?.label?.trim()
       || scmUnit?.atomicProduct?.label?.trim()
@@ -700,7 +713,7 @@ export function buildSellSheetRows(args: {
       strainType: resolvedStrainType.source,
       sku: scmSku ? 'scm.items' : 'fallback heuristic',
       unitsPerCase: scmItem?.unitsInACase != null ? 'scm.items' : 'fallback heuristic',
-      pricing: portfolio ? 'crm.portfolios' : '',
+      pricing: poCostPerUnit != null ? 'scm.items/PO amount' : portfolio ? 'crm.portfolios' : '',
       listing: programSource,
       thc: thcSource,
       cbd: cbdSource,
@@ -721,8 +734,8 @@ export function buildSellSheetRows(args: {
       sku,
       msrp: portfolio?.currentPrice?.msrpPerUnit ?? '',
       unitsPerCase,
-      costPerUnit: wholesale ?? '',
-      costPerCase: wholesale != null && units != null ? Number((wholesale * units).toFixed(4)) : '',
+      costPerUnit: poCostPerUnit ?? wholesale ?? '',
+      costPerCase: poCostPerCase ?? (wholesale != null && units != null ? Number((wholesale * units).toFixed(4)) : ''),
       thcPercent,
       terps,
       totalTerpenePercent,
@@ -737,6 +750,7 @@ export function buildSellSheetRows(args: {
         poItemId: item.id,
         itemRecordId: item.itemRecord?.id,
         scmItemId: scmItem?.id,
+        isVarietyPack,
         scmItemSkuText: skuText(scmItem?.skuText),
         exactPortfolioId: directPortfolio?.relation.id || directPortfolioRelations[0]?.id,
         portfolioIdSource,

@@ -26,6 +26,7 @@ const RAW_HEADERS = [
   'work order item ID',
   'item record ID',
   'scm item ID',
+  'is variety pack',
   'case product ID',
   'scm item SKU text',
   'exact portfolio ID',
@@ -101,6 +102,24 @@ export function createSellSheetWorkbook(rows: SellSheetRow[]): ExcelJS.Workbook 
     ]);
   }
 
+  const sharedColumns = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 16];
+  for (let start = 0; start < rows.length; start += 1) {
+    const first = rows[start];
+    if (first._raw.isVarietyPack !== true) continue;
+    const groupId = first._raw.workOrderItemId || first._raw.poItemId || first._raw.itemRecordId;
+    let end = start;
+    while (
+      end + 1 < rows.length
+      && rows[end + 1]._raw.isVarietyPack === true
+      && rows[end + 1]._raw.workOrderId === first._raw.workOrderId
+      && (rows[end + 1]._raw.workOrderItemId || rows[end + 1]._raw.poItemId || rows[end + 1]._raw.itemRecordId) === groupId
+    ) end += 1;
+    if (end > start) {
+      for (const column of sharedColumns) ws.mergeCells(start + 2, column, end + 2, column);
+      start = end;
+    }
+  }
+
   const header = ws.getRow(1);
   header.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
   header.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF9C001A' } };
@@ -143,6 +162,7 @@ export function createSellSheetWorkbook(rows: SellSheetRow[]): ExcelJS.Workbook 
       data.workOrderItemId ?? data.poItemId ?? '',
       data.itemRecordId ?? '',
       data.scmItemId ?? '',
+      data.isVarietyPack ?? false,
       data.productId,
       data.scmItemSkuText,
       data.exactPortfolioId ?? '',

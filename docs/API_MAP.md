@@ -34,7 +34,7 @@ This is the primary row record. Confirmed fields:
 - `skuText`, `unitsInACase`, `numberOfUnits`, `numberOfCases`, and `amount`
 - `inputLotId.id`, its embedded cannabinoid measurements, `thc`, `cbd`, and `thcRanges`
 - `product.caseInformation.unitProduct.isRotating` controls whether the Product Name receives a bracketed strain suffix
-- `varietyProfiles[].inputLotId.strain.label` supplies ordered rotating strain names when a variety pack has no top-level `inputLotId`
+- `varietyProfiles[].inputLotId` supplies ordered variety-pack lot IDs, bulk-lot lookups, potency rows, terpene fields, and rotating strain names when no top-level `inputLotId` exists
 - `sku.id`, `unitGtin.id`, and `caseGtin.id` link directly to the customer-specific `crm.portfolios` record
 - `primaryProductLotId`, `packagingDate`, `skidChecked`, `executionStatus`, and `tasksProgress`
 
@@ -90,6 +90,7 @@ Potency rule:
 - If the direct input-lot relationship is present, use that same lot for deeper potency/terpene data
 - Use selected inventory potency and its linked lot only when the direct item/lot data is missing
 - Never average multiple exact results; export additional results as grouped continuation rows
+- When `unitProduct.isVarietyPack === true`, vertically merge shared Excel cells across those lot rows; keep THC, CBD, dominant terpenes, and total terpene percentage separate
 
 ## Customer portfolio
 Primary request:
@@ -118,10 +119,24 @@ The exact sample portfolio `662806a706330a4d5c488d6d` confirmed all three curren
 
 Pricing rule:
 - MSRP = `currentPrice.msrpPerUnit`
-- Cost per Unit = `currentPrice.wholesalePricePerUnit`
-- Cost per Case = Cost per Unit × Units / Case
-- Missing direct pricing remains blank; PO amount is audit-only
+- Cost per Unit = exact PO `amount / numberOfCases / unitsInACase`
+- Cost per Case = exact PO `amount / numberOfCases`
+- `currentPrice.wholesalePricePerUnit` is retained only as a fallback when exact PO totals are unavailable
+- Missing MSRP remains blank; it is never inferred from cost
 
 Program rule:
 - `ft === false` maps to GL
 - `ft === true` requires an explicit linked inventory/PO Tier 1 or Tier 2 label; the boolean alone is never guessed
+
+## Outlook calendar
+Microsoft Graph application authentication uses the client-credentials flow. Calendar events are read through:
+
+`GET /v1.0/users/{OUTLOOK_CALENDAR_USER}/calendarView`
+
+or, when configured:
+
+`GET /v1.0/users/{OUTLOOK_CALENDAR_USER}/calendars/{OUTLOOK_CALENDAR_ID}/calendarView`
+
+Current scope is Ontario/OCS only. Event subject, preview, location, and categories are searched conservatively for an Ontario/OCS marker and a PO number. Results are deduplicated, then every loaded Slingr work order is revalidated against its customer/board before inclusion. Power BI tier enrichment is intentionally deferred until its stable join key and field are confirmed.
+
+The landing page supplies `startDateTime` and exclusive `endDateTime` for last week, last month, the last N completed weeks/months, or a custom inclusive start/end selection. Graph pagination is followed for long ranges; there is no fixed 31-day application limit.

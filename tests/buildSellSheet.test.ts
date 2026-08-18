@@ -75,7 +75,7 @@ function build(args?: {
 }
 
 describe('buildSellSheetRows', () => {
-  it('uses direct portfolio pricing and isolates GL inventory/potency', () => {
+  it('uses exact PO costs and isolates GL inventory/potency', () => {
     const rows = build({
       inventories: [
         {
@@ -104,8 +104,8 @@ describe('buildSellSheetRows', () => {
       category: 'Pre-Rolls',
       sku: '302328',
       msrp: 29.9,
-      costPerUnit: 12.5,
-      costPerCase: 150,
+      costPerUnit: 10,
+      costPerCase: 120,
       thcPercent: '28.5%',
       cbdPercent: '<0.1%',
       casesAvailable: 9,
@@ -204,7 +204,7 @@ describe('buildSellSheetRows', () => {
 
     expect(row).toMatchObject({
       brand: 'Direct Brand', strainType: 'Sativa', sku: '302158_1g___', unitsPerCase: 24,
-      msrp: 30, costPerUnit: 10, costPerCase: 240,
+      msrp: 30, costPerUnit: 10, costPerCase: 120,
       thcPercent: '29.180%', cbdPercent: '<0.050%', casesAvailable: 999,
       terps: 'Limonene - 1.25%', totalTerpenePercent: '2.75%',
     });
@@ -215,7 +215,7 @@ describe('buildSellSheetRows', () => {
       scmItemTasksProgress: 1,
     });
     expect(row._raw.fieldSources).toMatchObject({
-      thc: 'scm.items', cbd: 'scm.items', pricing: 'crm.portfolios', casesAvailable: 'scm.items',
+      thc: 'scm.items', cbd: 'scm.items', pricing: 'scm.items/PO amount', casesAvailable: 'scm.items',
     });
   });
 
@@ -309,13 +309,13 @@ describe('buildSellSheetRows', () => {
     );
   });
 
-  it('leaves direct pricing and cases blank when reliable records are missing', () => {
+  it('derives costs from the exact PO when portfolio pricing is missing', () => {
     const [row] = build({ portfolios: [{
       id: 'pf1', caseProduct: { id: 'p1' }, customer: { id: 'ocs-id' }, ft: false,
       currentPrice: { msrpPerUnit: null, wholesalePricePerUnit: null },
     }] });
 
-    expect(row).toMatchObject({ msrp: '', costPerUnit: '', costPerCase: '', casesAvailable: '' });
+    expect(row).toMatchObject({ msrp: '', costPerUnit: 10, costPerCase: 120, casesAvailable: '' });
     expect(row._raw.warnings).toContain('No unambiguous inventory record matched the selected listing program.');
   });
 
@@ -339,7 +339,7 @@ describe('buildSellSheetRows', () => {
       workItem: ft2Item,
       inventories: [{
         id: 'inv-ft2', board: { id: 'ocs-id' }, caseProduct: { id: 'p1' },
-        purchaseOrder: { id: 'tier2', label: 'IBOCS - PO OCS Tier 2' }, currentInventory: 12,
+        purchaseOrder: { id: 'tier2', label: 'IBOCS - PO OCS FT2' }, currentInventory: 12,
         totalThcPercentage: '31.42%',
       }],
       portfolios: [
@@ -363,6 +363,21 @@ describe('buildSellSheetRows', () => {
       costPerUnit: 10, costPerCase: 120,
     });
     expect(row._raw.portfolioId).toBe('pf-ft2');
+  });
+
+  it('recognizes an explicit FT1 inventory label', () => {
+    const [row] = build({
+      inventories: [{
+        id: 'inv-ft1', board: { id: 'ocs-id' }, caseProduct: { id: 'p1' },
+        purchaseOrder: { id: 'ft1', label: 'IBOCS - PO OCS FT 1' }, currentInventory: 8,
+      }],
+      portfolios: [{
+        id: 'pf-ft1', caseProduct: { id: 'p1' }, customer: { id: 'ocs-id' }, ft: true,
+        productInventoryEntry: { id: 'inv-ft1' },
+      }],
+    });
+
+    expect(row.listing).toBe('FT 1');
   });
 
   it('uses the FT2 portfolio CBD range when the direct lot has no exact CBD', () => {
@@ -599,18 +614,43 @@ describe('buildSellSheetRows', () => {
     const scmItem: ScmItem = {
       id: 'scm-item-1',
       product: varietyItem.product,
+      thc: '28.740%<br>30.120%',
+      cbd: '<0.050%<br>0.050%',
       varietyProfiles: [
-        { inputLotId: { id: 'lot-fruit', strain: { id: 'strain-fruit', label: 'Fruit Loops' } } },
-        { inputLotId: { id: 'lot-chem', strain: { id: 'strain-chem', label: 'CHEMZILLA' } } },
+        { inputLotId: { id: 'lot-fruit', bulkLot: 'BULK-FRUIT', strain: { id: 'strain-fruit', label: 'Fruit Loops' } } },
+        { inputLotId: { id: 'lot-chem', bulkLot: 'BULK-CHEM', strain: { id: 'strain-chem', label: 'CHEMZILLA' } } },
       ],
     };
 
-    expect(build({
+    const rows = build({
       workItem: varietyItem,
       scmItemsById: new Map([['item-record-1', scmItem]]),
-    })[0]).toMatchObject({
+      inputLotsById: new Map([
+        ['lot-fruit', {
+          id: 'lot-fruit', totalTerpenePercent: 2.11,
+          terpenesTable: '<td class="text-capitalize">limonene</td><td class="text-right">0.75%</td>',
+        }],
+        ['lot-chem', {
+          id: 'lot-chem', totalTerpenePercent: 3.22,
+          terpenesTable: '<td class="text-capitalize">myrcene</td><td class="text-right">1.25%</td>',
+        }],
+      ]),
+      portfolios: [{ id: 'pf', caseProduct: { id: 'p1' }, customer: { id: 'ocs-id' }, ft: false }],
+    });
+
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({
       category: 'Pre-Rolls',
       productName: 'Sativa Indica Variety Pack Pre-Rolls [Fruit Loops, CHEMZILLA]',
+      thcPercent: '28.740%', cbdPercent: '<0.050%',
+      terps: 'Limonene - 0.75%', totalTerpenePercent: '2.11%', listing: 'GL',
+      _raw: { isVarietyPack: true },
+    });
+    expect(rows[1]).toMatchObject({
+      brand: '', productName: '', strainType: '', format: '', category: '', sku: '',
+      msrp: '', unitsPerCase: '', costPerUnit: '', costPerCase: '', casesAvailable: '', listing: '',
+      thcPercent: '30.120%', cbdPercent: '0.050%',
+      terps: 'Myrcene - 1.25%', totalTerpenePercent: '3.22%',
     });
   });
 });

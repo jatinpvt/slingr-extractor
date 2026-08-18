@@ -41,6 +41,7 @@ describe('loadSellSheetData', () => {
       if (entity === 'scm.items') return {
         id: 'scm-1', product: { id: 'product' }, sku: { id: 'pf-exact' },
         inputLotId: { id: 'lot-direct', bulkLot: 'BULK-123', cannabinoids: {} },
+        varietyProfiles: [{ inputLotId: { id: 'lot-variety', bulkLot: 'BULK-456', cannabinoids: {} } }],
       };
       if (entity === 'pmd.products.caseProducts') return { id, brand: { id: 'brand', label: 'Brand' } };
       if (entity === 'crm.portfolios') return {
@@ -52,9 +53,10 @@ describe('loadSellSheetData', () => {
       if (entity === 'scm.productsInventory') return [];
       throw new Error(`Unexpected full collection fetch for ${entity}`);
     });
-    const get = vi.fn(async (path: string) => {
+    const get = vi.fn(async (path: string, params?: Record<string, unknown>) => {
       if (path === '/data/productionManagement.inputLots') {
-        return { items: [{ id: 'deep-lot-id', bulkLot: 'BULK-123', totalTerpenePercent: 2 }] };
+        const bulkLot = String(params?.bulkLot || '');
+        return { items: [{ id: 'deep-lot-id', bulkLot, totalTerpenePercent: bulkLot === 'BULK-123' ? 2 : 3 }] };
       }
       if (path === '/data/crm.portfolios') {
         return { total: 1, items: [{
@@ -82,9 +84,11 @@ describe('loadSellSheetData', () => {
     expect(data.scmItemsById.get('ir-1')?.id).toBe('scm-1');
     expect(data.portfolios.map((portfolio) => portfolio.id)).toEqual(['pf-strain', 'pf-exact']);
     expect(data.inputLotsById.get('lot-direct')?.totalTerpenePercent).toBe(2);
+    expect(data.inputLotsById.get('lot-variety')?.totalTerpenePercent).toBe(3);
     expect(getRecord.mock.calls.filter(([entity]) => entity === 'scm.items')).toEqual([['scm.items', 'ir-1']]);
     expect(getRecord.mock.calls.filter(([entity]) => entity === 'crm.portfolios')).toEqual([['crm.portfolios', 'pf-exact']]);
     expect(get).toHaveBeenCalledWith('/data/productionManagement.inputLots', { bulkLot: 'BULK-123', _size: 20 });
+    expect(get).toHaveBeenCalledWith('/data/productionManagement.inputLots', { bulkLot: 'BULK-456', _size: 20 });
     expect(get).toHaveBeenCalledWith('/data/crm.portfolios', { caseProduct: 'product', _size: 100 });
     expect(getRecord.mock.calls.filter(([entity]) => entity === 'productionManagement.inputLots')).toEqual([]);
     expect(getAll).toHaveBeenCalledTimes(1);
