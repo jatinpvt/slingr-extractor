@@ -68,15 +68,21 @@ function formatProductName(value: string, category: string): string {
   return name.replace(/\s+-\s*$/, '').trim();
 }
 
-function rotatingStrainLabels(scmItem: ScmItem | undefined, inputLotsById: Map<string, InputLot>): string[] {
-  if (scmItem?.product?.caseInformation?.unitProduct?.isRotating !== true) return [];
-  const lots = [
-    ...scmInputLots(scmItem),
-    ...(scmItem.varietyProfiles ?? []).flatMap((entry) => entry.inputLotId ? [entry.inputLotId] : []),
-  ];
+function rotatingStrainLabels(
+  item: WorkOrderItem,
+  scmItem: ScmItem | undefined,
+  inputLotIds: string[],
+  inputLotsById: Map<string, InputLot>,
+): string[] {
+  const rotating = scmItem?.product?.caseInformation?.unitProduct?.isRotating === true
+    || item.product?.caseInformation?.unitProduct?.isRotating === true;
+  if (!rotating) return [];
+  const directLots = scmInputLots(scmItem);
+  const lotIds = directLots.length > 0 ? directLots.map((lot) => lot.id) : inputLotIds;
   const seen = new Set<string>();
-  return lots.flatMap((lot) => {
-    const label = (inputLotsById.get(lot.id)?.strain?.label || lot.strain?.label || '').trim();
+  return lotIds.flatMap((id) => {
+    const embedded = directLots.find((lot) => lot.id === id);
+    const label = (inputLotsById.get(id)?.strain?.label || embedded?.strain?.label || '').trim();
     const key = label.toLocaleLowerCase();
     if (!label || seen.has(key)) return [];
     seen.add(key);
@@ -88,10 +94,11 @@ function productName(
   item: WorkOrderItem,
   scmItem: ScmItem | undefined,
   category: string,
+  inputLotIds: string[],
   inputLotsById: Map<string, InputLot>,
 ): { value: string; hasRotatingStrain: boolean } {
   const base = formatProductName(rawProductName(item, scmItem), category);
-  const strains = rotatingStrainLabels(scmItem, inputLotsById);
+  const strains = rotatingStrainLabels(item, scmItem, inputLotIds, inputLotsById);
   if (strains.length === 0 || /\[[^\]]+\]\s*$/.test(base)) {
     return { value: base, hasRotatingStrain: false };
   }
@@ -150,20 +157,21 @@ function getStrainType(args: {
   return { value: '', source: '' };
 }
 
-function compactFormat(item: WorkOrderItem): string {
+function compactFormat(item: WorkOrderItem, category: string): string {
   const unit = item.product?.caseInformation?.unitProduct;
   const total = unit?.cannabisWeight;
   const each = unit?.atomicProduct?.cannabisWeight;
+  const keepSingleCount = ['Pre-Rolls', 'Infused Pre-Rolls', 'Blunt'].includes(category);
   if (typeof total === 'number' && total > 0 && typeof each === 'number' && each > 0) {
     const count = Math.round(total / each);
     if (Math.abs((count * each) - total) < 0.000001) {
-      return count === 1 ? `${trimNumber(each)}g` : `${count}x${trimNumber(each)}g`;
+      return count === 1 && !keepSingleCount ? `${trimNumber(each)}g` : `${count}x${trimNumber(each)}g`;
     }
   }
 
   const label = unit?.format?.label || '';
   const match = label.match(/(\d+)\s*x\s*(\d+(?:\.\d+)?)\s*g/i);
-  if (match) return match[1] === '1' ? `${match[2]}g` : `${match[1]}x${match[2]}g`;
+  if (match) return match[1] === '1' && !keepSingleCount ? `${match[2]}g` : `${match[1]}x${match[2]}g`;
   return label;
 }
 
@@ -200,11 +208,17 @@ function relationId(value: unknown): string {
   return typeof value.id === 'string' ? value.id : '';
 }
 
-function exactPortfolioRelations(item: ScmItem | undefined): Array<{ id: string; source: PortfolioIdSource }> {
+function exactPortfolioRelations(
+  item: ScmItem | undefined,
+  workItem?: WorkOrderItem,
+): Array<{ id: string; source: PortfolioIdSource }> {
   const relations: Array<[PortfolioIdSource, unknown]> = [
     ['sku', item?.sku],
+    ['sku', workItem?.sku],
     ['unitGtin', item?.unitGtin],
+    ['unitGtin', workItem?.unitGtin],
     ['caseGtin', item?.caseGtin],
+    ['caseGtin', workItem?.caseGtin],
   ];
   const seen = new Set<string>();
   return relations.flatMap(([source, relation]) => {
@@ -416,16 +430,20 @@ function terpenesFromInputLot(inputLot: InputLot | undefined): string {
     .join('\n');
 }
 
-function cbdToleranceRange(portfolio: Portfolio | undefined): string {
-  const direct = portfolio?.cbdRange;
+function portfolioToleranceRange(portfolio: Portfolio | undefined, field: 'thc' | 'cbd'): string {
+  const direct = field === 'thc' ? portfolio?.thcRange : portfolio?.cbdRange;
   if (direct?.trim()) {
     const normalized = direct.trim().replace(/\s*-\s*/g, '–');
     return /^\s*[<>]?\d+(?:\.\d+)?\s*–\s*[<>]?\d+(?:\.\d+)?\s*$/.test(normalized)
       ? `${normalized}%`
       : normalized;
   }
-  const lower = portfolio?.tolerances?.cbdLowerBound;
-  const upper = portfolio?.tolerances?.cbdUpperBound;
+  const lower = field === 'thc'
+    ? portfolio?.tolerances?.thcLowerBound
+    : portfolio?.tolerances?.cbdLowerBound;
+  const upper = field === 'thc'
+    ? portfolio?.tolerances?.thcUpperBound
+    : portfolio?.tolerances?.cbdUpperBound;
   if (lower == null || lower === '' || upper == null || upper === '') return '';
   return `${lower}–${upper}%`;
 }
@@ -448,12 +466,14 @@ export function buildSellSheetRows(args: {
   inputLotsById: Map<string, InputLot>;
   portfolios: Portfolio[];
   cfg: AppConfig;
+  listingProgram?: Exclude<Program, ''>;
+  sourceEntity?: 'scm.workOrders' | 'scm.posFromStores' | 'scm.shippingStores';
   generatedAt?: string;
 }): SellSheetRow[] {
   const { workOrder, scmItemsById, caseProductsById, inventories, inputLotsById, portfolios, cfg } = args;
   const generatedAt = args.generatedAt || new Date().toISOString();
   const inventoryById = new Map(inventories.map((inventory) => [inventory.id, inventory]));
-  const requestedProgram = programFromLabel(workOrder.label);
+  const requestedProgram = args.listingProgram || programFromLabel(workOrder.label);
   const rowGroups: SellSheetRow[][] = [];
 
   for (const item of workOrder.items ?? []) {
@@ -485,18 +505,32 @@ export function buildSellSheetRows(args: {
     }
     const caseProduct = caseProductsById.get(productId);
     if (!caseProduct) warnings.push('Case Product record was not loaded.');
+    if (caseProduct) {
+      const resolvedUnit = resolvedItem.product?.caseInformation?.unitProduct;
+      const hasRichResolvedUnit = Boolean(resolvedUnit?.label && (resolvedUnit.atomicProduct || resolvedUnit.format));
+      resolvedItem.product = {
+        ...caseProduct,
+        ...resolvedItem.product,
+        id: productId,
+        brand: resolvedItem.product?.brand || caseProduct.brand,
+        customers: resolvedItem.product?.customers?.length ? resolvedItem.product.customers : caseProduct.customers,
+        caseInformation: hasRichResolvedUnit
+          ? resolvedItem.product?.caseInformation
+          : caseProduct.caseInformation || resolvedItem.product?.caseInformation,
+      };
+    }
 
     const scmSku = skuText(scmItem?.skuText) || skuText(scmItem?.sku);
-    const sku = scmSku || getSku(resolvedItem, cfg.customerId, cfg.customerCode);
-    const directPortfolioRelations = exactPortfolioRelations(scmItem);
+    const sku = scmSku || skuText(resolvedItem.sku) || getSku(resolvedItem, cfg.customerId, cfg.customerCode);
+    const directPortfolioRelations = exactPortfolioRelations(scmItem, resolvedItem);
     if (directPortfolioRelations.length > 1) {
-      warnings.push(`scm.items portfolio relationships disagree (${directPortfolioRelations.map(({ source, id }) => `${source}:${id}`).join(', ')}); first valid relationship used.`);
+      warnings.push(`Portfolio relationships disagree (${directPortfolioRelations.map(({ source, id }) => `${source}:${id}`).join(', ')}); first valid relationship used.`);
     }
     const directPortfolio = directPortfolioRelations
       .map((relation) => ({ relation, portfolio: portfolios.find((candidate) => candidate.id === relation.id) }))
       .find(({ portfolio: candidate }) => candidate?.customer?.id === cfg.customerId && candidate.caseProduct?.id === productId);
     if (directPortfolioRelations.length > 0 && !directPortfolio) {
-      warnings.push(`No direct crm.portfolios relationship matched the PO customer/product; deterministic fallback used.`);
+      warnings.push(`No direct crm.portfolios relationship matched the order customer/product; deterministic fallback used.`);
     }
     const fallbackPortfolio = directPortfolio ? undefined : choosePortfolio({
       item: resolvedItem,
@@ -520,12 +554,14 @@ export function buildSellSheetRows(args: {
       seenInventory.add(inventory.id);
       return true;
     });
-    let program = portfolio ? programForPortfolio(portfolio, inventoryById) : requestedProgram;
-    let programSource = program
-      ? portfolio?.ft === false
-        ? 'crm.portfolios'
-        : portfolio?.ft === true ? 'scm.productsInventory' : 'fallback heuristic'
-      : '';
+    let program = args.listingProgram || (portfolio ? programForPortfolio(portfolio, inventoryById) : requestedProgram);
+    let programSource = args.listingProgram
+      ? args.sourceEntity || 'explicit source rule'
+      : program
+        ? portfolio?.ft === false
+          ? 'crm.portfolios'
+          : portfolio?.ft === true ? 'scm.productsInventory' : 'fallback heuristic'
+        : '';
     if (!program) {
       const explicitPrograms = [...new Set(
         inventoryCandidates.map((inventory) => programFromLabel(inventory.purchaseOrder?.label)).filter(Boolean),
@@ -538,6 +574,7 @@ export function buildSellSheetRows(args: {
         warnings.push('Listing program could not be determined without guessing.');
       }
     }
+    const isFt2 = program === 'FT 2';
     let programInventory = program
       ? inventoryCandidates.filter((inventory) => programFromLabel(inventory.purchaseOrder?.label) === program)
       : [];
@@ -551,13 +588,15 @@ export function buildSellSheetRows(args: {
       }
     }
     if (cfg.requireSkidChecked) programInventory = programInventory.filter((inventory) => inventory.skidChecked === true);
-    if (programInventory.length === 0) warnings.push('No unambiguous inventory record matched the selected listing program.');
+    if (programInventory.length === 0 && !isFt2) warnings.push('No unambiguous inventory record matched the selected listing program.');
 
     const selectedInventory = chooseInventory({ inventories: programInventory, item: resolvedItem, workOrder, portfolio, warnings });
-    const scmCasesAvailable = finiteNumber(scmItem?.numberOfCases ?? '');
-    const casesAvailable = scmCasesAvailable ?? (program === 'FT 2'
-      ? cfg.ft2CasesAvailable
-      : programInventory.length > 0
+    const sourceCasesAvailable = ['scm.posFromStores', 'scm.shippingStores'].includes(args.sourceEntity || '')
+      ? finiteNumber(item.numberOfCases ?? '')
+      : finiteNumber(scmItem?.numberOfCases ?? '');
+    const casesAvailable = isFt2
+      ? 500
+      : sourceCasesAvailable ?? (programInventory.length > 0
         ? programInventory.reduce((sum, inventory) => sum + positiveInventoryValue(inventory), 0)
         : '');
 
@@ -565,6 +604,7 @@ export function buildSellSheetRows(args: {
     const directInputLotIds = [...new Set(directInputLots.map((lot) => lot.id).filter(Boolean))];
     const fallbackInputLotIds = [...new Set(selectedInventory?.inputLotId?.map((lot) => lot.id).filter(Boolean) ?? [])];
     let inputLotIds = directInputLotIds.length > 0 ? directInputLotIds : fallbackInputLotIds;
+    if (isFt2) inputLotIds = [];
     const embeddedInputLot = directInputLots[0];
     const scmThcValues = scmItem
       ? scmItemPercentages(scmItem.thc, embeddedInputLot?.cannabinoids?.totalThcPercentage)
@@ -621,7 +661,10 @@ export function buildSellSheetRows(args: {
     ));
     let thcValues: string[];
     let thcSource = '';
-    if (scmThcValues.some(Boolean)) {
+    if (isFt2) {
+      thcValues = [portfolioToleranceRange(portfolio, 'thc')];
+      thcSource = thcValues[0] ? 'crm.portfolios (FT2 range)' : '';
+    } else if (scmThcValues.some(Boolean)) {
       thcValues = scmThcValues;
       thcSource = 'scm.items';
     } else if (directInputLotIds.length > 0) {
@@ -637,7 +680,9 @@ export function buildSellSheetRows(args: {
         : inputThc ? 'productionManagement.inputLots (fallback heuristic)' : '';
     }
     const thcPercent = thcValues[0] || '';
-    if (!thcPercent && (
+    if (!thcPercent && isFt2) {
+      warnings.push('FT2 portfolio has no THC range; THC was left blank.');
+    } else if (!thcPercent && (
       scmItem?.thc != null
       || scmItem?.thcRanges
       || selectedInventory?.totalThcPercentage != null
@@ -648,15 +693,15 @@ export function buildSellSheetRows(args: {
     }
     let cbdValues: string[];
     let cbdSource = '';
-    if (scmCbdValues.some(Boolean)) {
+    if (isFt2) {
+      cbdValues = [portfolioToleranceRange(portfolio, 'cbd')];
+      cbdSource = cbdValues[0] ? 'crm.portfolios (FT2 range)' : '';
+    } else if (scmCbdValues.some(Boolean)) {
       cbdValues = scmCbdValues;
       cbdSource = 'scm.items';
     } else if (directInputLotIds.length > 0 && inputCbd) {
       cbdValues = [inputCbd];
       cbdSource = 'productionManagement.inputLots';
-    } else if (program === 'FT 2') {
-      cbdValues = [cbdToleranceRange(portfolio)];
-      cbdSource = cbdValues[0] ? 'crm.portfolios (fallback)' : '';
     } else if (directInputLotIds.length > 0) {
       cbdValues = [''];
     } else if (multipleInputLots) {
@@ -668,27 +713,27 @@ export function buildSellSheetRows(args: {
         ? 'scm.productsInventory (fallback heuristic)'
         : inputCbd ? 'productionManagement.inputLots (fallback heuristic)' : '';
     }
-    const wholesale = portfolio?.currentPrice?.wholesalePricePerUnit;
+    const wholesaleSourceValue = portfolio?.currentPrice?.wholesalePricePerUnit;
+    const wholesale = finiteNumber(wholesaleSourceValue ?? '');
+    const wholesaleCostPerUnit = wholesale != null && wholesale > 0 ? wholesale : undefined;
     const unitsPerCase = resolvedItem.unitsInACase ?? resolvedItem.product?.caseInformation?.quantity ?? '';
     const units = finiteNumber(unitsPerCase);
-    const poAmount = finiteNumber(item.amount ?? resolvedItem.amount ?? '');
-    const poCases = finiteNumber(item.numberOfCases ?? resolvedItem.numberOfCases ?? '');
-    const poUnits = finiteNumber(item.unitsInACase ?? item.product?.caseInformation?.quantity ?? unitsPerCase);
-    const poCostPerCase = poAmount != null && poCases != null && poCases > 0
-      ? Number((poAmount / poCases).toFixed(4))
-      : undefined;
-    const poCostPerUnit = poCostPerCase != null && poUnits != null && poUnits > 0
-      ? Number((poCostPerCase / poUnits).toFixed(4))
-      : undefined;
-    const terps = selectedInputLot
+    if (wholesaleCostPerUnit == null) {
+      warnings.push('No positive exact customer-portfolio wholesale price was available; Cost per Unit and Cost per Case were left blank.');
+    }
+    const terps = isFt2
+      ? 'NA'
+      : selectedInputLot
       ? terpenesFromInputLot(selectedInputLot) || 'NA'
-      : program === 'FT 2' || inputLotIds.length > 0 || unpairedDirectMulti ? 'NA' : '';
-    const totalTerpenePercent = selectedInputLot
+      : inputLotIds.length > 0 || unpairedDirectMulti ? 'NA' : '';
+    const totalTerpenePercent = isFt2
+      ? 'NA'
+      : selectedInputLot
       ? formatPercentage(selectedInputLot.totalTerpenePercent) || 'NA'
-      : program === 'FT 2' || inputLotIds.length > 0 || unpairedDirectMulti ? 'NA' : '';
+      : inputLotIds.length > 0 || unpairedDirectMulti ? 'NA' : '';
     const brand = scmItem?.brand?.label || caseProduct?.brand?.label || resolvedItem.product?.brand?.label || '';
     const category = getCategory(resolvedItem);
-    const resolvedProductName = productName(resolvedItem, scmItem, category, inputLotsById);
+    const resolvedProductName = productName(resolvedItem, scmItem, category, inputLotIds, inputLotsById);
     const resolvedStrainType = getStrainType({
       item: resolvedItem,
       scmItem,
@@ -713,29 +758,31 @@ export function buildSellSheetRows(args: {
       strainType: resolvedStrainType.source,
       sku: scmSku ? 'scm.items' : 'fallback heuristic',
       unitsPerCase: scmItem?.unitsInACase != null ? 'scm.items' : 'fallback heuristic',
-      pricing: poCostPerUnit != null ? 'scm.items/PO amount' : portfolio ? 'crm.portfolios' : '',
+      pricing: wholesaleCostPerUnit != null ? 'crm.portfolios.currentPrice.wholesalePricePerUnit' : '',
       listing: programSource,
       thc: thcSource,
       cbd: cbdSource,
       thcCustomerRange: scmItem?.thcRanges ? 'scm.items (audit only)' : portfolio?.thcRange ? 'crm.portfolios (audit only)' : '',
       terpenes: unpairedDirectMulti ? 'no exact lot mapping' : selectedInputLot ? 'productionManagement.inputLots' : '',
       totalTerpenePercent: unpairedDirectMulti ? 'no exact lot mapping' : selectedInputLot ? 'productionManagement.inputLots' : '',
-      casesAvailable: scmCasesAvailable != null
-        ? 'scm.items'
-        : program === 'FT 2' ? 'configured FT2 rule' : programInventory.length > 0 ? 'scm.productsInventory' : '',
+      casesAvailable: isFt2
+        ? 'static FT2 rule'
+        : sourceCasesAvailable != null
+          ? args.sourceEntity || 'scm.items'
+          : programInventory.length > 0 ? 'scm.productsInventory' : '',
     };
 
     const row: SellSheetRow = {
       brand,
       productName: resolvedProductName.value,
       strainType: resolvedStrainType.value,
-      format: compactFormat(resolvedItem),
+      format: compactFormat(resolvedItem, category),
       category,
       sku,
       msrp: portfolio?.currentPrice?.msrpPerUnit ?? '',
       unitsPerCase,
-      costPerUnit: poCostPerUnit ?? wholesale ?? '',
-      costPerCase: poCostPerCase ?? (wholesale != null && units != null ? Number((wholesale * units).toFixed(4)) : ''),
+      costPerUnit: wholesaleCostPerUnit ?? '',
+      costPerCase: wholesaleCostPerUnit != null && units != null ? Number((wholesaleCostPerUnit * units).toFixed(4)) : '',
       thcPercent,
       terps,
       totalTerpenePercent,
@@ -743,6 +790,7 @@ export function buildSellSheetRows(args: {
       casesAvailable,
       listing: program,
       _raw: {
+        sourceEntity: args.sourceEntity,
         poNumber: workOrder.poNumber,
         workOrderId: workOrder.id,
         workOrderItemId: item.id,
@@ -773,7 +821,7 @@ export function buildSellSheetRows(args: {
         portfolioThcRange: portfolio?.thcRange || '',
         listingProgram: program,
         msrpSourceValue: portfolio?.currentPrice?.msrpPerUnit ?? '',
-        wholesalePriceSourceValue: wholesale ?? '',
+        wholesalePriceSourceValue: wholesaleSourceValue ?? '',
         landedCostSourceValue: portfolio?.currentPrice?.landedCostPerUnit ?? '',
         poAmount: resolvedItem.amount ?? '',
         rawInventoryThc: selectedInventory?.totalThcPercentage ?? '',
@@ -787,9 +835,11 @@ export function buildSellSheetRows(args: {
     };
 
     const group = [row];
-    const continuationCount = directMultiCount > 1
-      ? Math.max(1, scmThcValues.length)
-      : Math.max(inputLotIds.length, thcValues.length, cbdValues.length);
+    const continuationCount = isFt2
+      ? 1
+      : directMultiCount > 1
+        ? Math.max(1, scmThcValues.length)
+        : Math.max(inputLotIds.length, thcValues.length, cbdValues.length);
     for (let index = 1; index < continuationCount; index += 1) {
       const inputLotId = inputLotIds[index];
       const inputLot = inputLotFor(inputLotId);

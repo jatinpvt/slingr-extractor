@@ -7,6 +7,7 @@ export class SlingrClient {
   constructor(private readonly cfg: AppConfig) {}
 
   async login(): Promise<void> {
+    requireSecureSlingrUrl(this.cfg.baseUrl);
     if (!this.cfg.email || !this.cfg.password) {
       throw new Error('Slingr email and password are required.');
     }
@@ -104,6 +105,10 @@ export class SlingrClient {
           continue;
         }
 
+        if (!includeToken) {
+          await response.body?.cancel().catch(() => undefined);
+          throw new Error(`Slingr authentication failed (${response.status}).`);
+        }
         const body = await response.text().catch(() => '');
         throw new Error(`Slingr ${response.status} ${response.statusText} for ${url}: ${body.slice(0, 1000)}`);
       } catch (error) {
@@ -118,6 +123,20 @@ export class SlingrClient {
     }
 
     throw new Error(`Slingr request failed for ${url}`);
+  }
+}
+
+function requireSecureSlingrUrl(value: string): void {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error('SLINGR_BASE_URL is invalid.');
+  }
+  const loopback = ['localhost', '127.0.0.1', '::1'].includes(url.hostname.toLowerCase());
+  if (url.username || url.password) throw new Error('SLINGR_BASE_URL must not contain credentials.');
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) {
+    throw new Error('SLINGR_BASE_URL must use HTTPS.');
   }
 }
 

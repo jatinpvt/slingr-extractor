@@ -43,6 +43,7 @@ describe('createSellSheetWorkbook', () => {
     expect(sheet.autoFilter).toEqual({ from: 'A1', to: 'P2' });
     expect(raw.state).toBe('hidden');
     expect(raw.getRow(1).values).toContain('warnings');
+    expect(raw.getRow(1).values).toContain('source entity');
     expect(raw.getRow(1).values).toContain('scm item ID');
     expect(raw.getRow(1).values).toContain('portfolio ID source');
     expect(raw.getRow(2).values).toContain('scm-item');

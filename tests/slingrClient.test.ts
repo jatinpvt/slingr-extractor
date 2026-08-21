@@ -12,7 +12,6 @@ const cfg = {
   timeoutMs: 1_000,
   retryCount: 2,
   requireSkidChecked: false,
-  ft2CasesAvailable: 500,
 } satisfies AppConfig;
 
 function json(body: unknown, status = 200, headers?: HeadersInit): Response {
@@ -32,6 +31,25 @@ describe('SlingrClient', () => {
     await expect(new SlingrClient({ ...cfg, email: '', password: '' }).login())
       .rejects.toThrow('Slingr email and password are required.');
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses to send credentials to a non-HTTPS Slingr host', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(new SlingrClient({ ...cfg, baseUrl: 'http://example.test/api' }).login())
+      .rejects.toThrow('must use HTTPS');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('does not expose the Slingr authentication response body', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ internal: 'sensitive detail' }, 401)));
+
+    const error = await new SlingrClient(cfg).login().catch((reason: unknown) => reason);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe('Slingr authentication failed (401).');
+    expect((error as Error).message).not.toContain('sensitive detail');
   });
 
   it('deduplicates paginated records by ID and continues until total unique records', async () => {

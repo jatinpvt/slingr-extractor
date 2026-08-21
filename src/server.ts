@@ -1,5 +1,6 @@
 import { createServer, type ServerResponse } from 'node:http';
 import { config } from './config.js';
+import { applySecurityHeaders, isTrustedCredentialOrigin, safeErrorMessage } from './lib/httpSecurity.js';
 import { parsePoNumbers, poNumberFilePart } from './lib/poNumber.js';
 import { generateBatchSellSheetBuffer, generateDeliveryDateSellSheetBuffer } from './services/generateSellSheet.js';
 
@@ -29,6 +30,8 @@ const PAGE = `<!doctype html>
     input, select, textarea { min-width: 0; flex: 1; border: 1px solid #b7c9bd; padding: 0 14px; font-size: 18px; background: white; }
     textarea { min-height: 116px; padding-block: 12px; resize: vertical; }
     input:focus, select:focus, textarea:focus { outline: 3px solid #a7d9b9; border-color: #287747; }
+    .date-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .date-grid[hidden] { display: none; }
     button { border: 0; padding: 0 18px; color: white; background: #216b40; font-weight: 750; cursor: pointer; }
     button:hover { background: #185632; }
     button:disabled { opacity: 0.75; cursor: wait; }
@@ -48,8 +51,9 @@ const PAGE = `<!doctype html>
     .status { min-height: 22px; margin-top: 12px; color: #2f7650; font-weight: 700; }
     .status.error { color: #8b1d1d; }
     .status.success { color: #226c44; }
+    .status.warning { color: #8a5a00; }
     .hint { margin: -4px 0 14px; font-size: 14px; }
-    @media (max-width: 480px) { main { padding: 28px 22px; } .controls { flex-direction: column; } }
+    @media (max-width: 480px) { main { padding: 28px 22px; } .controls { flex-direction: column; } .date-grid { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
@@ -82,12 +86,31 @@ const PAGE = `<!doctype html>
       <div id="delivery-date-fields" hidden>
         <label for="range-type">Delivery date</label>
         <select class="credential-input" id="range-type" name="rangeType">
-          <option value="last_week">Last week</option>
-          <option value="custom">Custom date</option>
+          <option value="relative">Last completed week(s) / month(s)</option>
+          <option value="custom">Custom date range</option>
         </select>
-        <div id="custom-date-field" hidden>
-          <label for="custom-date">Custom delivery date</label>
-          <input class="credential-input" id="custom-date" name="customDate" type="date">
+        <div id="relative-date-field" class="date-grid">
+          <div>
+            <label for="range-count">Number</label>
+            <input class="credential-input" id="range-count" name="rangeCount" type="number" min="1" max="12" value="1">
+          </div>
+          <div>
+            <label for="range-unit">Period</label>
+            <select class="credential-input" id="range-unit" name="rangeUnit">
+              <option value="weeks">Week(s), Fri-Thu</option>
+              <option value="months">Calendar month(s)</option>
+            </select>
+          </div>
+        </div>
+        <div id="custom-date-field" class="date-grid" hidden>
+          <div>
+            <label for="custom-start">Start date</label>
+            <input class="credential-input" id="custom-start" name="customStart" type="date">
+          </div>
+          <div>
+            <label for="custom-end">End date</label>
+            <input class="credential-input" id="custom-end" name="customEnd" type="date">
+          </div>
         </div>
         <p id="delivery-date-summary" class="hint"></p>
       </div>
@@ -114,8 +137,12 @@ const PAGE = `<!doctype html>
     const manualFields = document.getElementById('manual-fields');
     const deliveryDateFields = document.getElementById('delivery-date-fields');
     const rangeTypeInput = document.getElementById('range-type');
+    const relativeDateField = document.getElementById('relative-date-field');
+    const rangeCountInput = document.getElementById('range-count');
+    const rangeUnitInput = document.getElementById('range-unit');
     const customDateField = document.getElementById('custom-date-field');
-    const customDateInput = document.getElementById('custom-date');
+    const customStartInput = document.getElementById('custom-start');
+    const customEndInput = document.getElementById('custom-end');
     const deliveryDateSummary = document.getElementById('delivery-date-summary');
     const status = document.getElementById('form-status');
     const generationLoader = document.getElementById('generation-loader');
@@ -127,32 +154,48 @@ const PAGE = `<!doctype html>
       String(date.getDate()).padStart(2, '0'),
     ].join('-');
 
+    const datesBetween = (start, end) => {
+      const dates = [];
+      for (const date = new Date(start); date <= end; date.setDate(date.getDate() + 1)) dates.push(dateValue(date));
+      return dates;
+    };
+
     const selectedDeliveryDates = () => {
       if (rangeTypeInput.value === 'custom') {
-        return /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.test(customDateInput.value) ? [customDateInput.value] : [];
+        if (!customStartInput.value || !customEndInput.value) return [];
+        const start = new Date(customStartInput.value + 'T00:00:00');
+        const end = new Date(customEndInput.value + 'T00:00:00');
+        if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || end < start) return [];
+        return datesBetween(start, end);
       }
       const today = new Date();
-      const currentMonday = new Date(today);
-      currentMonday.setHours(0, 0, 0, 0);
-      currentMonday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
-      const start = new Date(currentMonday);
-      start.setDate(start.getDate() - 7);
-      const dates = [];
-      for (let offset = 0; offset < 7; offset += 1) {
-        const date = new Date(start);
-        date.setDate(start.getDate() + offset);
-        dates.push(dateValue(date));
+      today.setHours(0, 0, 0, 0);
+      const count = Number.parseInt(rangeCountInput.value, 10);
+      if (!Number.isInteger(count) || count < 1 || count > 12) return [];
+      if (rangeUnitInput.value === 'months') {
+        const start = new Date(today.getFullYear(), today.getMonth() - count, 1);
+        const end = new Date(today.getFullYear(), today.getMonth(), 0);
+        return datesBetween(start, end);
       }
-      return dates;
+      const currentFriday = new Date(today);
+      currentFriday.setDate(today.getDate() - ((today.getDay() + 2) % 7));
+      const start = new Date(currentFriday);
+      start.setDate(currentFriday.getDate() - count * 7);
+      const end = new Date(currentFriday);
+      end.setDate(currentFriday.getDate() - 1);
+      return datesBetween(start, end);
     };
 
     const updateDeliveryDate = () => {
       const custom = rangeTypeInput.value === 'custom';
+      relativeDateField.hidden = custom;
       customDateField.hidden = !custom;
-      customDateInput.required = custom && modeInput.value === 'delivery_date';
+      rangeCountInput.required = !custom && modeInput.value === 'delivery_date';
+      customStartInput.required = custom && modeInput.value === 'delivery_date';
+      customEndInput.required = custom && modeInput.value === 'delivery_date';
       const dates = selectedDeliveryDates();
       if (dates.length === 0) {
-        deliveryDateSummary.textContent = 'Choose a delivery date.';
+        deliveryDateSummary.textContent = custom ? 'Choose a valid start and end date.' : 'Enter a number from 1 to 12.';
         return;
       }
       const display = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
@@ -171,7 +214,9 @@ const PAGE = `<!doctype html>
       if (byDate) {
         updateDeliveryDate();
       } else {
-        customDateInput.required = false;
+        rangeCountInput.required = false;
+        customStartInput.required = false;
+        customEndInput.required = false;
       }
     };
 
@@ -213,7 +258,10 @@ const PAGE = `<!doctype html>
 
     modeInput.addEventListener('change', updateMode);
     rangeTypeInput.addEventListener('change', updateDeliveryDate);
-    customDateInput.addEventListener('change', updateDeliveryDate);
+    rangeCountInput.addEventListener('input', updateDeliveryDate);
+    rangeUnitInput.addEventListener('change', updateDeliveryDate);
+    customStartInput.addEventListener('change', updateDeliveryDate);
+    customEndInput.addEventListener('change', updateDeliveryDate);
     updateMode();
 
     stopButton.addEventListener('click', () => {
@@ -279,6 +327,13 @@ const PAGE = `<!doctype html>
           throw new Error(message || 'The sell sheet could not be generated.');
         }
 
+        const responseList = (name) => (response.headers.get(name) || '').split(',').map((value) => value.trim()).filter(Boolean);
+        const workOrderPos = responseList('x-sell-sheet-work-order-pos');
+        const shippingStorePos = responseList('x-sell-sheet-shipping-store-pos');
+        const failedPos = responseList('x-sell-sheet-failed-pos');
+        const excludedPos = responseList('x-sell-sheet-excluded-pos');
+        const skippedPos = responseList('x-sell-sheet-skipped-pos');
+
         const blob = await response.blob();
         const downloadUrl = URL.createObjectURL(blob);
         const anchor = document.createElement('a');
@@ -290,7 +345,13 @@ const PAGE = `<!doctype html>
           : 'sell_sheet_' + validPoNumbers.length + '_pos.xlsx';
         anchor.click();
         URL.revokeObjectURL(downloadUrl);
-        setStatus('Your sell sheet is ready.', 'success');
+        const sourceSummary = 'Purchase Orders: ' + (workOrderPos.join(', ') || 'none')
+          + '. Shipping Stores: ' + (shippingStorePos.join(', ') || 'none') + '.';
+        const notices = [];
+        if (excludedPos.length) notices.push('No eligible approved-brand products: ' + excludedPos.join(', ') + '.');
+        if (skippedPos.length) notices.push('Wrong province: ' + skippedPos.join(', ') + '.');
+        if (failedPos.length) notices.push('Could not be generated: ' + failedPos.join(', ') + '.');
+        setStatus('Your sell sheet is ready. ' + sourceSummary + (notices.length ? ' ' + notices.join(' ') : ''), notices.length ? 'warning' : 'success');
       } catch (error) {
         if (error && error.name === 'AbortError') {
           setStatus('Download stopped.', 'error');
@@ -306,14 +367,11 @@ const PAGE = `<!doctype html>
 </html>`;
 
 function getErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return String(error);
+  return safeErrorMessage(error);
 }
 
 function getErrorStatus(error: unknown): number {
-  if (error instanceof Error && /No scm\.workOrders record found|Multiple work orders returned|invalid PO|Enter a valid PO number/i.test(error.message)) {
+  if (error instanceof Error && /No scm\.workOrders record found|No Slingr records could be generated|Multiple work orders returned|invalid PO|Enter a valid PO number/i.test(error.message)) {
     return 404;
   }
   return 500;
@@ -334,6 +392,7 @@ function sendText(response: ServerResponse, status: number, message: string): vo
 }
 
 const server = createServer(async (request, response) => {
+  applySecurityHeaders(response);
   const pathname = new URL(request.url || '/', 'http://localhost').pathname;
 
   if (request.method === 'GET' && pathname === '/') {
@@ -348,6 +407,10 @@ const server = createServer(async (request, response) => {
 
   if (request.method !== 'POST' || (pathname !== '/sell-sheet' && pathname !== '/api/sell-sheet')) {
     sendText(response, 404, 'Not found.');
+    return;
+  }
+  if (!isTrustedCredentialOrigin(request)) {
+    sendText(response, 403, 'Cross-site credential submissions are not allowed.');
     return;
   }
 
@@ -386,18 +449,14 @@ const server = createServer(async (request, response) => {
       : poNumbers.length === 1
       ? `sell_sheet_${poNumberFilePart(poNumbers[0])}.xlsx`
       : `sell_sheet_${poNumbers.length}_pos.xlsx`;
-    let workbook: Buffer;
-    if (mode === 'delivery_date') {
-      console.log(`Starting delivery-date sell sheet generation for ${province}`);
-      const result = await generateDeliveryDateSellSheetBuffer(deliveryDates, province, { ...config, email, password });
-      workbook = result.workbook;
-      console.log(`Generated delivery-date sell sheet from ${result.resolvedPoNumbers.length} PO(s); skipped ${result.skippedPoNumbers.length}.`);
-    } else {
-      console.log(`Starting sell sheet generation for ${poNumbers.length} PO(s)`);
-      const result = await generateBatchSellSheetBuffer(poNumbers, province, { ...config, email, password });
-      workbook = result.workbook;
-      console.log(`Generated sell sheet for ${result.resolvedPoNumbers.length} PO(s) (${workbook.length} bytes)`);
-    }
+    console.log(mode === 'delivery_date'
+      ? `Starting delivery-date sell sheet generation for ${province}`
+      : `Starting sell sheet generation for ${poNumbers.length} PO(s)`);
+    const result = mode === 'delivery_date'
+      ? await generateDeliveryDateSellSheetBuffer(deliveryDates, province, { ...config, email, password })
+      : await generateBatchSellSheetBuffer(poNumbers, province, { ...config, email, password });
+    const workbook = result.workbook;
+    console.log(`Generated sell sheet for ${result.resolvedPoNumbers.length} PO(s); ${result.failedPoNumbers.length} failed, ${result.excludedPoNumbers.length} had no eligible rows, and ${result.skippedPoNumbers.length} were skipped (${workbook.length} bytes).`);
 
     response.writeHead(200, {
       'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -405,6 +464,11 @@ const server = createServer(async (request, response) => {
       'content-length': workbook.length,
       'cache-control': 'no-store',
       'x-content-type-options': 'nosniff',
+      'x-sell-sheet-work-order-pos': result.workOrderPoNumbers.join(','),
+      'x-sell-sheet-shipping-store-pos': result.shippingStorePoNumbers.join(','),
+      'x-sell-sheet-failed-pos': result.failedPoNumbers.join(','),
+      'x-sell-sheet-excluded-pos': result.excludedPoNumbers.join(','),
+      'x-sell-sheet-skipped-pos': result.skippedPoNumbers.join(','),
     });
     response.end(workbook);
   } catch (error) {

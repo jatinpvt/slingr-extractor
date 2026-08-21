@@ -21,6 +21,7 @@ export const SELL_SHEET_HEADERS = [
 ] as const;
 
 const RAW_HEADERS = [
+  'source entity',
   'PO number',
   'workOrder ID',
   'work order item ID',
@@ -193,6 +194,7 @@ export function createSellSheetWorkbook(
   for (const row of exportRows) {
     const data = row._raw;
     raw.addRow([
+      data.sourceEntity ?? '',
       data.poNumber ?? '',
       data.workOrderId,
       data.workOrderItemId ?? data.poItemId ?? '',

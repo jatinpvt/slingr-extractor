@@ -88,7 +88,8 @@ Confirmed:
 Potency rule:
 - Prefer the exact PO line's `scm.items.thc` / `cbd` and embedded structured cannabinoids
 - Preserve `lessThan`, `lessOrEqual`, `greaterThan`, `greaterOrEqual`, and `equal` comparisons; formatted `scm.items` text retains decimal precision such as `<0.200%`
-- THC accepts only one exact percentage; portfolio ranges, range strings, and non-percentage units are not displayed
+- GL and FT1 accept only one exact percentage; range strings and non-percentage units are not displayed
+- FT2 is the deliberate exception: use the exact customer-portfolio THC/CBD range without calculating or assuming a midpoint
 - If the direct input-lot relationship is present, use that same lot for deeper potency/terpene data
 - Use selected inventory potency and its linked lot only when the direct item/lot data is missing
 - Never average multiple exact results; export additional results as grouped continuation rows
@@ -96,9 +97,9 @@ Potency rule:
 
 ## Customer portfolio
 Primary request:
-`GET /data/crm.portfolios/{scm.items.sku.id || scm.items.unitGtin.id || scm.items.caseGtin.id}`
+`GET /data/crm.portfolios/{sku.id || unitGtin.id || caseGtin.id}` from `scm.items`.
 
-The direct relationship is preferred in that exact order. Full portfolio pagination and deterministic product/customer matching are retained only for lines without a usable direct relationship.
+The direct relationship is preferred in that exact order. `scm.shippingStores` supplies `items[].caseProduct.id`, so shipping rows use deterministic exact product/customer portfolio matching when no usable item relationship remains.
 
 Strain-only fallback uses `GET /data/crm.portfolios?caseProduct={caseProductId}&_size=100`, verified to return only exact matching case-product records. This avoids downloading every portfolio.
 
@@ -114,21 +115,45 @@ Confirmed:
 - `currentPrice.wholesalePricePerUnit`
 - `currentPrice.landedCostPerUnit`
 - `productInventoryEntry.id` links a portfolio to a finished-inventory record
-- `thcRange` is observed but deliberately not used for output because THC must be exact
+- `thcRange` supplies the FT2 THC range when populated; it is not used for GL or FT1
 - `cbdRange` and CBD tolerance bounds supply the FT2 CBD range when populated
 
 The exact sample portfolio `662806a706330a4d5c488d6d` confirmed all three current price fields (`msrpPerUnit`, `wholesalePricePerUnit`, and `landedCostPerUnit`).
 
 Pricing rule:
 - MSRP = `currentPrice.msrpPerUnit`
-- Cost per Unit = exact PO `amount / numberOfCases / unitsInACase`
-- Cost per Case = exact PO `amount / numberOfCases`
-- `currentPrice.wholesalePricePerUnit` is retained only as a fallback when exact PO totals are unavailable
+- Cost per Unit = exact customer portfolio `currentPrice.wholesalePricePerUnit`
+- Cost per Case = `currentPrice.wholesalePricePerUnit * unitsInACase`
+- PO/shipping `amount` is landed cost and is retained only in `_Raw`; it is never substituted into visible wholesale cost fields
+- Missing, zero, or invalid wholesale price leaves both cost fields blank with an audit warning
 - Missing MSRP remains blank; it is never inferred from cost
 
 Program rule:
-- `ft === false` maps to GL
-- `ft === true` requires an explicit linked inventory/PO Tier 1 or Tier 2 label; the boolean alone is never guessed
+- Ontario `scm.workOrders` rows are GL and are restricted to the six confirmed owned brands
+- `scm.shippingStores.destination.label` `OCS FT Sales ( Tier 1 )` maps to FT1
+- `scm.shippingStores.destination.label` `OCS FT Sales ( Tier 2 )` maps to FT2
+- Portfolio `ft` does not override the explicit store tier
+
+## Shipping Stores
+
+Manual PO lookup reaches this entity only after exact, leading-zero, and validated `like(...)` lookups all fail in `scm.workOrders`. Exact/leading-zero lookup uses `poFromStore`; partial lookup uses `shipmentIdentifier=like(<PO>)`. The matched destination must identify Tier 1 or Tier 2 before rows are generated.
+
+`GET /data/scm.shippingStores?shipmentIdentifier=like(YYYY-MM-DD)&board=<OCS_ID>`
+
+Confirmed fields:
+- `poFromStore.label` supplies the PO number
+- the `YYYY-MM-DD` portion of `shipmentIdentifier` is the FT source date
+- `destination.label` identifies Tier 1 or Tier 2; `destination.board.province` and `board.id` identify Ontario/OCS
+- `items[].caseProduct.id`, `requiredCases`, `amount`, `status`, `itemRecord`, and `inventory`
+- only items whose normalized `status` is `ok` are adapted into sell-sheet rows
+- historical `items[].itemRecord.id` can return 404; exact case-product/customer portfolio matching supplies product presentation and pricing instead
+
+FT rules:
+- FT1 uses matching Tier 1 finished inventory and exact input-lot lab data when present
+- FT2 does not use finished-lot potency or terpenes; THC/CBD use exact portfolio ranges and terpene fields are `NA`
+- FT1 uses shipping `requiredCases` for Cases Available; every FT2 row uses the static business value 500
+
+`scm.posFromStores` is no longer used for generation because its product status/availability data was inaccurate. Its API adapter is retained inactive as a rollback aid.
 
 ## Delivery-date discovery
 
@@ -136,4 +161,8 @@ The landing page queries Slingr directly for each selected date:
 
 `GET /data/scm.workOrders?targetDeliveryDate=YYYY-MM-DD`
 
-Last week means the previous completed Monday through Sunday and therefore performs seven exact-date queries. Custom date performs one. Results are paginated, deduplicated by work-order ID, filtered to the selected province customer/board, and then run through the normal PO generation path. Outlook, Microsoft Graph, and SharePoint are not used.
+Ontario also queries:
+
+`GET /data/scm.shippingStores?shipmentIdentifier=like(YYYY-MM-DD)&board=<OCS_ID>`
+
+Weed Me weeks run Friday through Thursday. Last N weeks selects the N completed business weeks before the current Friday-through-Thursday week; Last N months selects N completed calendar months. Ontario first completes one GL query for every included day, then performs one shipping source-date/OCS-board FT query for every included day. A custom range follows the same sequence. Results are paginated, deduplicated by source record ID, limited to status-`ok` shipping items and the six approved brand families, mapped through exact IDs, and merged into one workbook. Outlook, Microsoft Graph, SharePoint, Power BI, and `scm.posFromStores` are not used for this path.

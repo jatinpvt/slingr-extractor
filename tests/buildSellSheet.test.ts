@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildSellSheetRows } from '../src/services/buildSellSheet.js';
 import type { AppConfig } from '../src/config.js';
-import type { InputLot, Portfolio, ProductInventory, ScmItem, WorkOrderItem } from '../src/types.js';
+import type { CaseProduct, InputLot, Portfolio, ProductInventory, ScmItem, WorkOrderItem } from '../src/types.js';
 
 const cfg = {
   baseUrl: 'https://example.test/api',
@@ -13,7 +13,6 @@ const cfg = {
   timeoutMs: 45_000,
   retryCount: 3,
   requireSkidChecked: false,
-  ft2CasesAvailable: 500,
 } satisfies AppConfig;
 
 const item: WorkOrderItem = {
@@ -49,13 +48,14 @@ function build(args?: {
   inputLotsById?: Map<string, InputLot>;
   portfolios?: Portfolio[];
   scmItemsById?: Map<string, ScmItem>;
+  caseProductsById?: Map<string, CaseProduct>;
 }) {
   return buildSellSheetRows({
     cfg,
     generatedAt: '2026-08-17T12:00:00.000Z',
     workOrder: { id: 'wo1', poNumber: '123', label: 'YLC - PO 123', items: [args?.workItem ?? item] },
     scmItemsById: args?.scmItemsById ?? new Map(),
-    caseProductsById: new Map([['p1', { id: 'p1', brand: { id: 'b1', label: 'Weed Me' } }]]),
+    caseProductsById: args?.caseProductsById ?? new Map([['p1', { id: 'p1', brand: { id: 'b1', label: 'Weed Me' } }]]),
     inventories: args?.inventories ?? [],
     inputLotsById: args?.inputLotsById ?? new Map([['lot-gl', {
       id: 'lot-gl',
@@ -75,7 +75,73 @@ function build(args?: {
 }
 
 describe('buildSellSheetRows', () => {
-  it('uses exact PO costs and isolates GL inventory/potency', () => {
+  it('uses explicit store Tier 2, exact portfolio range, order quantity, and no lot assays', () => {
+    const storeItem: WorkOrderItem = {
+      id: 'store-line',
+      itemRecord: { id: 'stale-item' },
+      product: { id: 'p1', label: 'Case of 12 - Blue Iguana' },
+      sku: { id: 'pf-store', sku: '302328_3x0.5g___' },
+      unitsInACase: 12,
+      numberOfCases: 15,
+      amount: 1204.2,
+    };
+    const richProduct: CaseProduct = {
+      id: 'p1', brand: { id: 'b1', label: 'Weed Me' },
+      caseInformation: {
+        quantity: 12,
+        unitProduct: {
+          label: 'Blue Iguana 0.5g Pre-Rolls (3 Pre-Rolls in a CR Tube) 1.5g in total',
+          cannabisWeight: 1.5,
+          format: { id: 'f', label: 'Pre-rolls 3x0.5g ; Tube ; 1.5g' },
+          atomicProduct: {
+            label: 'Blue Iguana', cannabisWeight: 0.5,
+            productType: { id: 'type', label: 'Pre-Rolls' },
+          },
+        },
+      },
+    };
+    const rows = buildSellSheetRows({
+      cfg,
+      generatedAt: '2026-08-17T12:00:00.000Z',
+      workOrder: { id: 'store-order', poNumber: '110335', label: 'OCS FT Sales ( Tier 2 )', items: [storeItem] },
+      scmItemsById: new Map(),
+      caseProductsById: new Map([['p1', richProduct]]),
+      inventories: [{
+        id: 'inv-ft2', board: { id: 'ocs-id' }, caseProduct: { id: 'p1' },
+        purchaseOrder: { id: 'tier2', label: 'IBOCS - PO OCS Tier 2' },
+        totalThcPercentage: '31%', inputLotId: [{ id: 'made-lot' }], currentInventory: 99,
+      }],
+      inputLotsById: new Map([['made-lot', {
+        id: 'made-lot', totalTerpenePercent: 2.5,
+        cannabinoids: { totalThcPercentage: { value: 31, measurement: 'percentage' } },
+        terpenesTable: '<td class="text-capitalize">limonene</td><td class="text-right">1%</td>',
+      }]]),
+      portfolios: [{
+        id: 'pf-store', customer: { id: 'ocs-id' }, caseProduct: { id: 'p1' }, ft: false,
+        thcRange: '28% - 34%', cbdRange: '0 - 1',
+        currentPrice: { msrpPerUnit: 20, wholesalePricePerUnit: 8.82, landedCostPerUnit: 6.69 },
+      }],
+      listingProgram: 'FT 2',
+      sourceEntity: 'scm.shippingStores',
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      brand: 'Weed Me', productName: 'Blue Iguana Pre-Rolls', format: '3x0.5g', category: 'Pre-Rolls',
+      sku: '302328_3x0.5g___', msrp: 20, unitsPerCase: 12,
+      costPerUnit: 8.82, costPerCase: 105.84,
+      thcPercent: '28%–34%', cbdPercent: '0–1%', terps: 'NA', totalTerpenePercent: 'NA',
+      casesAvailable: 500, listing: 'FT 2',
+    });
+    expect(rows[0]._raw).toMatchObject({
+      sourceEntity: 'scm.shippingStores', portfolioId: 'pf-store', portfolioIdSource: 'sku',
+      fieldSources: expect.objectContaining({
+        thc: 'crm.portfolios (FT2 range)', casesAvailable: 'static FT2 rule',
+      }),
+    });
+  });
+
+  it('uses exact portfolio wholesale pricing and isolates GL inventory/potency', () => {
     const rows = build({
       inventories: [
         {
@@ -104,8 +170,8 @@ describe('buildSellSheetRows', () => {
       category: 'Pre-Rolls',
       sku: '302328',
       msrp: 29.9,
-      costPerUnit: 10,
-      costPerCase: 120,
+      costPerUnit: 12.5,
+      costPerCase: 150,
       thcPercent: '28.5%',
       cbdPercent: '<0.1%',
       casesAvailable: 9,
@@ -204,7 +270,7 @@ describe('buildSellSheetRows', () => {
 
     expect(row).toMatchObject({
       brand: 'Direct Brand', strainType: 'Sativa', sku: '302158_1g___', unitsPerCase: 24,
-      msrp: 30, costPerUnit: 10, costPerCase: 120,
+      msrp: 30, costPerUnit: 10, costPerCase: 240,
       thcPercent: '29.180%', cbdPercent: '<0.050%', casesAvailable: 999,
       terps: 'Limonene - 1.25%', totalTerpenePercent: '2.75%',
     });
@@ -215,7 +281,8 @@ describe('buildSellSheetRows', () => {
       scmItemTasksProgress: 1,
     });
     expect(row._raw.fieldSources).toMatchObject({
-      thc: 'scm.items', cbd: 'scm.items', pricing: 'scm.items/PO amount', casesAvailable: 'scm.items',
+      thc: 'scm.items', cbd: 'scm.items',
+      pricing: 'crm.portfolios.currentPrice.wholesalePricePerUnit', casesAvailable: 'scm.items',
     });
   });
 
@@ -309,17 +376,20 @@ describe('buildSellSheetRows', () => {
     );
   });
 
-  it('derives costs from the exact PO when portfolio pricing is missing', () => {
+  it('leaves costs blank instead of substituting landed PO amount when wholesale pricing is missing', () => {
     const [row] = build({ portfolios: [{
       id: 'pf1', caseProduct: { id: 'p1' }, customer: { id: 'ocs-id' }, ft: false,
       currentPrice: { msrpPerUnit: null, wholesalePricePerUnit: null },
     }] });
 
-    expect(row).toMatchObject({ msrp: '', costPerUnit: 10, costPerCase: 120, casesAvailable: '' });
+    expect(row).toMatchObject({ msrp: '', costPerUnit: '', costPerCase: '', casesAvailable: '' });
+    expect(row._raw.warnings).toContain(
+      'No positive exact customer-portfolio wholesale price was available; Cost per Unit and Cost per Case were left blank.',
+    );
     expect(row._raw.warnings).toContain('No unambiguous inventory record matched the selected listing program.');
   });
 
-  it('uses exact portfolio relation and exact THC with FT2 NA/configured cases rules', () => {
+  it('uses exact portfolio ranges with FT2 NA/static cases rules', () => {
     const ft2Item = {
       ...item,
       productPortfolio: { id: 'pf-ft2' },
@@ -358,11 +428,12 @@ describe('buildSellSheetRows', () => {
 
     expect(row).toMatchObject({
       productName: 'Peach AIO', strainType: 'Various', format: '1g', category: 'AIO Vape',
-      listing: 'FT 2', thcPercent: '31.42%', cbdPercent: '0–1%',
+      listing: 'FT 2', thcPercent: '28%–34%', cbdPercent: '0–1%',
       terps: 'NA', totalTerpenePercent: 'NA', casesAvailable: 500,
       costPerUnit: 10, costPerCase: 120,
     });
     expect(row._raw.portfolioId).toBe('pf-ft2');
+    expect(row._raw.fieldSources.thc).toBe('crm.portfolios (FT2 range)');
   });
 
   it('recognizes an explicit FT1 inventory label', () => {
@@ -406,10 +477,10 @@ describe('buildSellSheetRows', () => {
     });
 
     expect(row).toMatchObject({
-      thcPercent: '31.000%', cbdPercent: '0–1%', listing: 'FT 2',
-      terps: 'Limonene - 0.75%', totalTerpenePercent: '2.4%',
+      thcPercent: '', cbdPercent: '0–1%', listing: 'FT 2',
+      terps: 'NA', totalTerpenePercent: 'NA', casesAvailable: 500,
     });
-    expect(row._raw.fieldSources.cbd).toBe('crm.portfolios (fallback)');
+    expect(row._raw.fieldSources.cbd).toBe('crm.portfolios (FT2 range)');
   });
 
   it('rejects THC ranges and falls back to the linked exact input-lot result', () => {
@@ -501,6 +572,24 @@ describe('buildSellSheetRows', () => {
 
     expect(build({ workItem: blunt })[0].category).toBe('Blunt');
     expect(build({ workItem: infused })[0].category).toBe('Infused Pre-Rolls');
+  });
+
+  it.each([
+    ['Pre-Rolls', 'Pre-rolls 1x1g', '1x1g'],
+    ['THC Infused Final Products', 'Infused pre-rolls 1x1g', '1x1g'],
+    ['Pre-Rolls', 'Pre-roll Blunts 1x1g', '1x1g'],
+    ['Vape Cartridge', 'Vape cartridge 1x1g', '1g'],
+    ['Disposable Vape', 'Disposable vape 1x1g', '1g'],
+    ['Concentrates', 'Hash 1x1g', '1g'],
+  ])('formats a single %s unit from %s as %s', (productType, format, expected) => {
+    const single = structuredClone(item);
+    const unit = single.product!.caseInformation!.unitProduct!;
+    unit.cannabisWeight = 1;
+    unit.atomicProduct!.cannabisWeight = 1;
+    unit.atomicProduct!.productType = { id: 'type', label: productType };
+    unit.format = { id: 'format', label: format };
+
+    expect(build({ workItem: single })[0].format).toBe(expected);
   });
 
   it.each([

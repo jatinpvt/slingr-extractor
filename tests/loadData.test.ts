@@ -1,15 +1,49 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AppConfig } from '../src/config.js';
 import type { SlingrClient } from '../src/api/slingrClient.js';
-import { loadSellSheetData } from '../src/services/loadData.js';
+import { loadSellSheetData, loadSellSheetDataForWorkOrder } from '../src/services/loadData.js';
 
 const cfg = {
   baseUrl: 'https://example.test/api', email: 'x', password: 'x', customerCode: 'OCS',
   customerId: 'ocs-id', pageSize: 500, timeoutMs: 45_000, retryCount: 3,
-  requireSkidChecked: false, ft2CasesAvailable: 500,
+  requireSkidChecked: false,
 } satisfies AppConfig;
 
 describe('loadSellSheetData', () => {
+  it('uses store-order portfolio relations when the stale scm.items record is gone', async () => {
+    const getRecord = vi.fn(async (entity: string, id: string) => {
+      if (entity === 'scm.items') throw new Error('Slingr 404 Not Found');
+      if (entity === 'pmd.products.caseProducts') return {
+        id, brand: { id: 'brand', label: 'Weed Me' },
+        caseInformation: { quantity: 12, unitProduct: { label: 'Product', atomicProduct: {} } },
+      };
+      if (entity === 'crm.portfolios') return {
+        id, caseProduct: { id: 'product' }, customer: { id: 'ocs-id' }, strainType: 'sativa', currentPrice: {},
+      };
+      throw new Error(`Unexpected entity ${entity}`);
+    });
+    const getAll = vi.fn(async (entity: string) => {
+      if (entity === 'scm.productsInventory') return [];
+      throw new Error(`Unexpected full collection fetch for ${entity}`);
+    });
+    const client = { getRecord, getAll } as unknown as SlingrClient;
+
+    const data = await loadSellSheetDataForWorkOrder(client, cfg, {
+      id: 'store-order', poNumber: '110249', customer: { id: 'ocs-id', label: 'OCS' },
+      items: [{
+        id: 'line', itemRecord: { id: 'deleted-item' }, product: { id: 'product' },
+        sku: { id: 'portfolio-direct', sku: '123_1g___' },
+      }],
+    });
+
+    expect(data.scmItemsById.size).toBe(0);
+    expect(data.portfolios.map((portfolio) => portfolio.id)).toEqual(['portfolio-direct']);
+    expect(data.caseProductsById.get('product')?.caseInformation?.quantity).toBe(12);
+    expect(getRecord).toHaveBeenCalledWith('crm.portfolios', 'portfolio-direct');
+    expect(getAll).toHaveBeenCalledTimes(1);
+    expect(getAll).toHaveBeenCalledWith('scm.productsInventory');
+  });
+
   it('uses the purchase-order customer as the province board', async () => {
     const getRecord = vi.fn(async (entity: string, id: string) => ({ id, label: entity }));
     const getAll = vi.fn(async (entity: string) => entity === 'scm.productsInventory' ? [

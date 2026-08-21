@@ -20,7 +20,7 @@ export type WorkOrderItem = {
   id?: string;
   label?: string;
   unitGtin?: { id?: string; label?: string; unitGtin?: string | null } | null;
-  caseGtin?: unknown;
+  caseGtin?: (Ref & { caseProduct?: Ref | null }) | null;
   sku?: SkuValue;
   productPortfolio?: Ref | null;
   product?: {
@@ -58,6 +58,8 @@ export type WorkOrderItem = {
   numberOfUnits?: string | number | null;
   unitsInACase?: string | number | null;
   numberOfCases?: string | number | null;
+  casePrice?: string | number | null;
+  extendedPrice?: string | number | null;
   amount?: string | number | null;
   itemRecord?: Ref | null;
 };
@@ -73,6 +75,47 @@ export type WorkOrder = {
   poDate?: string | null;
   targetDeliveryDate?: string | null;
   items?: WorkOrderItem[];
+};
+
+export type StorePurchaseOrder = {
+  id: string;
+  label?: string | null;
+  store?: Ref | null;
+  board?: (Ref & {
+    productSelection?: string | null;
+    unitOfMeasure?: string | null;
+  }) | null;
+  province?: string | null;
+  poNumber?: string | number | null;
+  poDate?: string | null;
+  requestedDate?: string | null;
+  targetPickupDate?: string | null;
+  items?: WorkOrderItem[];
+};
+
+export type ShippingStoreItem = {
+  id?: string;
+  label?: string | null;
+  caseProduct?: Ref | null;
+  requiredCases?: string | number | null;
+  amount?: string | number | null;
+  status?: string | null;
+  itemRecord?: Ref | null;
+  inventory?: ProductInventory[] | null;
+};
+
+export type ShippingStore = {
+  id: string;
+  label?: string | null;
+  shipmentIdentifier?: string | null;
+  poFromStore?: Ref | null;
+  board?: Ref | null;
+  destination?: (Ref & { board?: (Ref & { province?: string | null }) | null }) | null;
+  status?: string | null;
+  pickupDate?: string | null;
+  expectedDeliveryDate?: string | null;
+  confirmedDeliveryDate?: string | null;
+  items?: ShippingStoreItem[] | null;
 };
 
 export type ScmItem = {
@@ -110,6 +153,8 @@ export type CaseProduct = {
   id: string;
   label?: string;
   brand?: Ref | null;
+  customers?: CustomerSku[];
+  caseInformation?: NonNullable<WorkOrderItem['product']>['caseInformation'];
 };
 
 export type ProductInventory = {
@@ -184,11 +229,13 @@ export type Portfolio = {
   } | null;
   thcRange?: string | null;
   cbdRange?: string | null;
-  tolerances?: {
+    tolerances?: {
     thcLowerBound?: number | string | null;
     thcUpperBound?: number | string | null;
     cbdLowerBound?: number | string | null;
     cbdUpperBound?: number | string | null;
+    thcUnitOfMeasurement?: string | null;
+    cbdUnitOfMeasurement?: string | null;
     units?: string | null;
   } | null;
   status?: string | null;
@@ -220,6 +267,7 @@ export type SellSheetRow = {
   casesAvailable: number | '';
   listing: string;
   _raw: {
+    sourceEntity?: string;
     poNumber?: string | number | null;
     workOrderId: string;
     workOrderItemId?: string;

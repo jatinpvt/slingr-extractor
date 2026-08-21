@@ -1,5 +1,5 @@
 import type { AppConfig } from '../config.js';
-import type { CaseProduct, InputLot, Portfolio, ProductInventory, ScmItem, WorkOrder } from '../types.js';
+import type { CaseProduct, InputLot, Portfolio, ProductInventory, ScmItem, WorkOrder, WorkOrderItem } from '../types.js';
 import { SlingrClient } from '../api/slingrClient.js';
 import { getWorkOrderByPoNumber } from '../api/workOrders.js';
 import { getCaseProduct } from '../api/caseProducts.js';
@@ -25,11 +25,14 @@ function relationId(value: unknown): string {
   return typeof value.id === 'string' ? value.id : '';
 }
 
-function portfolioRelationIds(item: ScmItem | undefined): string[] {
+function portfolioRelationIds(item: ScmItem | undefined, workItem?: WorkOrderItem): string[] {
   return [...new Set([
     relationId(item?.sku),
+    relationId(workItem?.sku),
     relationId(item?.unitGtin),
+    relationId(workItem?.unitGtin),
     relationId(item?.caseGtin),
+    relationId(workItem?.caseGtin),
   ].filter(Boolean))];
 }
 
@@ -52,6 +55,15 @@ async function missingRecordIsUndefined<T>(load: () => Promise<T>): Promise<T | 
 
 export async function loadSellSheetData(client: SlingrClient, cfg: AppConfig, poNumber: string): Promise<LoadedData> {
   const workOrder = await getWorkOrderByPoNumber(client, poNumber);
+  return loadSellSheetDataForWorkOrder(client, cfg, workOrder);
+}
+
+export async function loadSellSheetDataForWorkOrder(
+  client: SlingrClient,
+  cfg: AppConfig,
+  workOrder: WorkOrder,
+  options: { includeInventory?: boolean } = {},
+): Promise<LoadedData> {
   const customerId = workOrder.customer?.board?.id || workOrder.customer?.id || cfg.customerId;
   const customerCode = workOrder.customer?.board?.code
     || workOrder.customer?.board?.label
@@ -66,7 +78,7 @@ export async function loadSellSheetData(client: SlingrClient, cfg: AppConfig, po
       id,
       record: await missingRecordIsUndefined(() => getScmItem(client, id)),
     })),
-    getAllInventory(client),
+    options.includeInventory === false ? Promise.resolve([]) : getAllInventory(client),
   ]);
   const scmItemsById = new Map<string, ScmItem>();
   for (const { id, record } of scmItemResults) {
@@ -77,7 +89,7 @@ export async function loadSellSheetData(client: SlingrClient, cfg: AppConfig, po
   );
   const productIds = [...new Set(workItems.map(productIdFor).filter(Boolean))];
   const exactPortfolioIds = [...new Set(
-    workItems.flatMap((item) => portfolioRelationIds(scmItemsById.get(item.itemRecord?.id || ''))),
+    workItems.flatMap((item) => portfolioRelationIds(scmItemsById.get(item.itemRecord?.id || ''), item)),
   )];
 
   const [caseProducts, exactPortfolioResults] = await Promise.all([
@@ -89,7 +101,7 @@ export async function loadSellSheetData(client: SlingrClient, cfg: AppConfig, po
   const needsPortfolioFallback = workItems.some((item) => {
     const scmItem = scmItemsById.get(item.itemRecord?.id || '');
     const productId = productIdFor(item);
-    return !portfolioRelationIds(scmItem).some((id) => {
+    return !portfolioRelationIds(scmItem, item).some((id) => {
       const portfolio = exactPortfoliosById.get(id);
       return portfolio?.customer?.id === customerId && portfolio.caseProduct?.id === productId;
     });
@@ -106,7 +118,7 @@ export async function loadSellSheetData(client: SlingrClient, cfg: AppConfig, po
       || poUnit?.atomicProduct?.cannabis?.profile?.strain?.type?.trim()
     ) return [];
     const productId = productIdFor(item);
-    const exactPortfolioHasStrain = portfolioRelationIds(scmItem).some((id) => {
+    const exactPortfolioHasStrain = portfolioRelationIds(scmItem, item).some((id) => {
       const portfolio = exactPortfoliosById.get(id);
       return portfolio?.caseProduct?.id === productId && Boolean(portfolio.strainType?.trim());
     });
